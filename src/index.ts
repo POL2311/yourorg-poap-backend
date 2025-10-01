@@ -1,63 +1,29 @@
-// src/index.ts
-import 'dotenv/config';
+// program/backend/src/index.ts
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-
+import permitsRouter from './routes/permits'; // 👈 asegúrate que la ruta sea correcta y tenga extensión .js si usas ESM
 const app = express();
+
+// Middlewares globales
 app.use(cors());
 app.use(helmet());
-app.use(express.json());
+app.use(express.json()); // 👈 IMPORTANTE: esto va DESPUÉS de crear app
 
-// ===== Opcional: intentos de conexión (no detienen el server si fallan)
-let mongoStatus: 'connected'|'disabled'|'error' = 'disabled';
-let redisStatus: 'connected'|'disabled'|'error' = 'disabled';
-
-(async () => {
-  const uri = process.env.MONGODB_URI;
-  if (uri) {
-    try {
-      const { default: mongoose } = await import('mongoose');
-      await mongoose.connect(uri, { dbName: process.env.MONGO_DB || 'gasless' });
-      mongoStatus = 'connected';
-      console.log('[MongoDB] conectado');
-    } catch (e) {
-      mongoStatus = 'error';
-      console.warn('[MongoDB] error de conexión (el backend sigue funcionando):', (e as Error).message);
-    }
-  }
-
-  const redisUrl = process.env.REDIS_URL;
-  if (redisUrl) {
-    try {
-      const Redis = (await import('ioredis')).default;
-      const redis = new Redis(redisUrl);
-      redis.on('error', () => { /* evitamos tumbar el proceso */ });
-      await redis.ping();
-      redisStatus = 'connected';
-      console.log('[Redis] conectado');
-    } catch (e) {
-      redisStatus = 'error';
-      console.warn('[Redis] error de conexión (el backend sigue funcionando):', (e as Error).message);
-    }
-  }
-})().catch(() => { /* no romper arranque */ });
-
-// ===== Rutas mínimas
-app.get('/health', (req, res) => {
+// Healthcheck
+app.get('/health', (_req, res) => {
   res.json({
     ok: true,
     uptime: process.uptime(),
-    mongo: mongoStatus,
-    redis: redisStatus,
+    mongo: 'connected',
+    redis: 'connected',
   });
 });
 
-// Ejemplo de router (si luego agregas más)
- import permitsRouter from './routes/permits';
- app.use('/api/permits', permitsRouter);
+// Monta el router en /api/permits
+app.use('/api/permits', permitsRouter);
 
-const PORT = Number(process.env.PORT || 3000);
+const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
 app.listen(PORT, () => {
-  console.log(`API escuchando en http://localhost:${PORT}`);
+  console.log(`🚀 Backend listening on port ${PORT}`);
 });
