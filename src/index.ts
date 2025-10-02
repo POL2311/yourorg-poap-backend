@@ -1,29 +1,24 @@
-// program/backend/src/index.ts
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import permitsRouter from './routes/permits'; // 👈 asegúrate que la ruta sea correcta y tenga extensión .js si usas ESM
+import permitsRouter from './routes/permits';
+
 const app = express();
 
-// Middlewares globales
 app.use(cors());
 app.use(helmet());
-app.use(express.json()); // 👈 IMPORTANTE: esto va DESPUÉS de crear app
+app.use(express.json()); // necesario para leer JSON
 
-// Healthcheck
 app.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
-    uptime: process.uptime(),
-    mongo: 'connected',
-    redis: 'connected',
-  });
+  res.json({ ok: true, uptime: process.uptime(), mongo: 'connected', redis: 'connected' });
 });
+app.use((req, _res, next) => {
+  console.log(`[API] ${req.method} ${req.url}`)
+  next()
+})
 
-// Monta el router en /api/permits
+// monta exactamente en /api/permits
 app.use('/api/permits', permitsRouter);
 
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-app.listen(PORT, () => {
-  console.log(`🚀 Backend listening on port ${PORT}`);
-});
+const PORT = Number(process.env.PORT || 3000);
+app.listen(PORT, () => console.log(`API listening on ${PORT}`));
