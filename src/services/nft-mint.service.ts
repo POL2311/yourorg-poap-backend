@@ -1,4 +1,4 @@
-// backend/src/services/nft-mint.service.ts - SIMPLIFIED VERSION
+// backend/src/services/nft-mint.service.ts - FIXED SIMULATION
 import {
   Connection,
   PublicKey,
@@ -161,12 +161,9 @@ export class NFTMintService {
 
       console.log('📝 Transaction signed, simulating...');
 
-      // 10. Simular transacción primero
+      // 10. Simular transacción primero (SINTAXIS CORREGIDA)
       try {
-        const simulation = await this.connection.simulateTransaction(transaction, {
-          commitment: 'confirmed',
-          sigVerify: false
-        });
+        const simulation = await this.connection.simulateTransaction(transaction);
         
         if (simulation.value.err) {
           console.error('❌ Simulation error:', simulation.value.err);
