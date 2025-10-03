@@ -1,27 +1,20 @@
-// backend/src/services/nft-mint.service.ts - OPTIMIZADO
+// backend/src/services/nft-mint.service.ts - SIMPLIFIED VERSION
 import {
   Connection,
   PublicKey,
   Keypair,
   Transaction,
   SystemProgram,
-  SYSVAR_RENT_PUBKEY,
 } from '@solana/web3.js';
 import {
-  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  createInitializeMint2Instruction,
+  createInitializeMintInstruction,
   createAssociatedTokenAccountInstruction,
   createMintToInstruction,
   getAssociatedTokenAddressSync,
-  getMintLen,
-  ExtensionType,
-  createInitializeMetadataPointerInstruction,
-  createInitializeInstruction,
-  pack,
-  TokenMetadata,
+  MINT_SIZE,
 } from '@solana/spl-token';
-import { createInitializeInstruction as createMetadataInitializeInstruction } from '@solana/spl-token-metadata';
 
 export interface NFTMintResult {
   success: boolean;
@@ -40,7 +33,7 @@ export class NFTMintService {
   }
 
   /**
-   * Mintea un NFT real usando Token-2022 + Metadata
+   * Mintea un NFT simple usando SPL Token (más estable que Token-2022)
    * El relayer paga todos los costos, el NFT va al usuario
    */
   async mintNFTToUser(
@@ -54,7 +47,7 @@ export class NFTMintService {
     }
   ): Promise<NFTMintResult> {
     try {
-      console.log('🎨 Starting NFT mint process...');
+      console.log('🎨 Starting SIMPLE NFT mint process...');
       console.log(`👤 User: ${userPublicKey.toString()}`);
       console.log(`⚡ Relayer: ${relayerKeypair.publicKey.toString()}`);
 
@@ -62,8 +55,8 @@ export class NFTMintService {
       const relayerBalance = await this.connection.getBalance(relayerKeypair.publicKey);
       console.log(`💰 Relayer balance: ${relayerBalance / 1e9} SOL`);
 
-      if (relayerBalance < 0.1 * 1e9) { // Menos de 0.1 SOL
-        throw new Error(`Insufficient relayer balance: ${relayerBalance / 1e9} SOL. Need at least 0.1 SOL for minting.`);
+      if (relayerBalance < 0.01 * 1e9) { // Menos de 0.01 SOL
+        throw new Error(`Insufficient relayer balance: ${relayerBalance / 1e9} SOL. Need at least 0.01 SOL for minting.`);
       }
 
       // 2. Generar nueva mint keypair
@@ -75,52 +68,27 @@ export class NFTMintService {
         mintKeypair.publicKey,
         userPublicKey,
         false,
-        TOKEN_2022_PROGRAM_ID,
+        TOKEN_PROGRAM_ID,
         ASSOCIATED_TOKEN_PROGRAM_ID
       );
       console.log(`📦 User Token Account: ${userTokenAccount.toString()}`);
 
-      // 4. Preparar metadata más simple para reducir costos
-      const metadata: TokenMetadata = {
-        updateAuthority: relayerKeypair.publicKey,
-        mint: mintKeypair.publicKey,
-        name: nftMetadata.name,
-        symbol: nftMetadata.symbol,
-        uri: `data:application/json;base64,${Buffer.from(JSON.stringify({
-          name: nftMetadata.name,
-          description: nftMetadata.description,
-          image: nftMetadata.image,
-          attributes: [
-            { trait_type: 'Type', value: 'Gasless NFT' },
-            { trait_type: 'Network', value: 'Solana' }
-          ]
-        })).toString('base64')}`,
-        additionalMetadata: [
-          ['description', nftMetadata.description],
-          ['gasless', 'true']
-        ],
-      };
-
-      // 5. Calcular espacio necesario para la mint
-      const extensions = [ExtensionType.MetadataPointer];
-      const mintLen = getMintLen(extensions);
-
-      // 6. Calcular rent con buffer adicional
-      const mintRent = await this.connection.getMinimumBalanceForRentExemption(mintLen);
+      // 4. Calcular rent necesario
+      const mintRent = await this.connection.getMinimumBalanceForRentExemption(MINT_SIZE);
       const ataRent = await this.connection.getMinimumBalanceForRentExemption(165); // ATA size
       const totalRentNeeded = mintRent + ataRent;
       
       console.log(`💰 Mint rent: ${mintRent} lamports`);
       console.log(`💰 ATA rent: ${ataRent} lamports`);
       console.log(`💰 Total rent needed: ${totalRentNeeded} lamports`);
-      console.log(`📏 Mint length: ${mintLen} bytes`);
 
-      // 7. Verificar que el relayer tiene suficientes fondos para el rent
-      if (relayerBalance < totalRentNeeded + 10_000_000) { // +0.01 SOL buffer para fees
-        throw new Error(`Insufficient funds for rent. Need ${(totalRentNeeded + 10_000_000) / 1e9} SOL, have ${relayerBalance / 1e9} SOL`);
+      // 5. Verificar que el relayer tiene suficientes fondos
+      const bufferAmount = 5_000_000; // 0.005 SOL buffer para fees
+      if (relayerBalance < totalRentNeeded + bufferAmount) {
+        throw new Error(`Insufficient funds for rent. Need ${(totalRentNeeded + bufferAmount) / 1e9} SOL, have ${relayerBalance / 1e9} SOL`);
       }
 
-      // 8. Verificar si la ATA ya existe
+      // 6. Verificar si la ATA ya existe
       let createATA = true;
       try {
         const ataInfo = await this.connection.getAccountInfo(userTokenAccount);
@@ -129,60 +97,35 @@ export class NFTMintService {
           createATA = false;
         }
       } catch (error) {
-        // ATA no existe, necesitamos crearla
         console.log('📦 ATA does not exist, will create');
       }
 
-      // 9. Crear transacción
+      // 7. Crear transacción
       const transaction = new Transaction();
 
-      // 9.1. Crear cuenta de mint
+      // 7.1. Crear cuenta de mint
       transaction.add(
         SystemProgram.createAccount({
           fromPubkey: relayerKeypair.publicKey,
           newAccountPubkey: mintKeypair.publicKey,
-          space: mintLen,
+          space: MINT_SIZE,
           lamports: mintRent,
-          programId: TOKEN_2022_PROGRAM_ID,
+          programId: TOKEN_PROGRAM_ID,
         })
       );
 
-      // 9.2. Inicializar metadata pointer
+      // 7.2. Inicializar mint (NFT = 0 decimals)
       transaction.add(
-        createInitializeMetadataPointerInstruction(
-          mintKeypair.publicKey,
-          relayerKeypair.publicKey,
-          mintKeypair.publicKey,
-          TOKEN_2022_PROGRAM_ID
-        )
-      );
-
-      // 9.3. Inicializar mint
-      transaction.add(
-        createInitializeMint2Instruction(
+        createInitializeMintInstruction(
           mintKeypair.publicKey,
           0, // 0 decimals para NFT
           relayerKeypair.publicKey, // mint authority
-          null, // freeze authority
-          TOKEN_2022_PROGRAM_ID
+          relayerKeypair.publicKey, // freeze authority
+          TOKEN_PROGRAM_ID
         )
       );
 
-      // 9.4. Inicializar metadata
-      transaction.add(
-        createMetadataInitializeInstruction({
-          programId: TOKEN_2022_PROGRAM_ID,
-          metadata: mintKeypair.publicKey,
-          updateAuthority: relayerKeypair.publicKey,
-          mint: mintKeypair.publicKey,
-          mintAuthority: relayerKeypair.publicKey,
-          name: metadata.name,
-          symbol: metadata.symbol,
-          uri: metadata.uri,
-        })
-      );
-
-      // 9.5. Crear ATA del usuario (solo si no existe)
+      // 7.3. Crear ATA del usuario (solo si no existe)
       if (createATA) {
         transaction.add(
           createAssociatedTokenAccountInstruction(
@@ -190,13 +133,13 @@ export class NFTMintService {
             userTokenAccount,
             userPublicKey, // owner
             mintKeypair.publicKey,
-            TOKEN_2022_PROGRAM_ID,
+            TOKEN_PROGRAM_ID,
             ASSOCIATED_TOKEN_PROGRAM_ID
           )
         );
       }
 
-      // 9.6. Mintear 1 NFT al usuario
+      // 7.4. Mintear 1 NFT al usuario
       transaction.add(
         createMintToInstruction(
           mintKeypair.publicKey,
@@ -204,33 +147,42 @@ export class NFTMintService {
           relayerKeypair.publicKey, // mint authority
           1, // amount (1 NFT)
           [],
-          TOKEN_2022_PROGRAM_ID
+          TOKEN_PROGRAM_ID
         )
       );
 
-      // 10. Configurar transacción con prioridad
-      const { blockhash } = await this.connection.getLatestBlockhash('confirmed');
+      // 8. Configurar transacción
+      const { blockhash, lastValidBlockHeight } = await this.connection.getLatestBlockhash('confirmed');
       transaction.recentBlockhash = blockhash;
       transaction.feePayer = relayerKeypair.publicKey;
 
-      // 11. Firmar transacción
+      // 9. Firmar transacción
       transaction.sign(relayerKeypair, mintKeypair);
 
-      console.log('📝 Transaction signed, sending...');
+      console.log('📝 Transaction signed, simulating...');
 
-      // 12. Simular transacción primero
+      // 10. Simular transacción primero
       try {
-        const simulation = await this.connection.simulateTransaction(transaction);
+        const simulation = await this.connection.simulateTransaction(transaction, {
+          commitment: 'confirmed',
+          sigVerify: false
+        });
+        
         if (simulation.value.err) {
+          console.error('❌ Simulation error:', simulation.value.err);
+          console.error('❌ Simulation logs:', simulation.value.logs);
           throw new Error(`Simulation failed: ${JSON.stringify(simulation.value.err)}`);
         }
+        
         console.log('✅ Transaction simulation successful');
+        console.log('📊 Simulation logs:', simulation.value.logs?.slice(-5)); // Últimos 5 logs
       } catch (simError) {
         console.error('❌ Simulation failed:', simError);
         throw new Error(`Simulation failed. ${simError instanceof Error ? simError.message : 'Unknown simulation error'}`);
       }
 
-      // 13. Enviar transacción
+      // 11. Enviar transacción
+      console.log('📤 Sending transaction...');
       const signature = await this.connection.sendRawTransaction(
         transaction.serialize(),
         {
@@ -242,12 +194,12 @@ export class NFTMintService {
 
       console.log(`📦 Transaction sent: ${signature}`);
 
-      // 14. Confirmar transacción
+      // 12. Confirmar transacción
       const confirmation = await this.connection.confirmTransaction(
         {
           signature,
           blockhash,
-          lastValidBlockHeight: (await this.connection.getLatestBlockhash()).lastValidBlockHeight,
+          lastValidBlockHeight,
         },
         'confirmed'
       );
@@ -256,13 +208,18 @@ export class NFTMintService {
         throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
       }
 
-      // 15. Calcular costo real
-      const txInfo = await this.connection.getTransaction(signature, {
-        commitment: 'confirmed'
-      });
-      const gasCost = txInfo?.meta?.fee || 0;
+      // 13. Calcular costo real
+      let gasCost = 0;
+      try {
+        const txInfo = await this.connection.getTransaction(signature, {
+          commitment: 'confirmed'
+        });
+        gasCost = txInfo?.meta?.fee || 0;
+      } catch (error) {
+        console.warn('Could not get transaction fee info');
+      }
 
-      console.log('🎉 NFT MINTED SUCCESSFULLY!');
+      console.log('🎉 SIMPLE NFT MINTED SUCCESSFULLY!');
       console.log(`🎨 Mint Address: ${mintKeypair.publicKey.toString()}`);
       console.log(`👤 User Token Account: ${userTokenAccount.toString()}`);
       console.log(`📦 Transaction: ${signature}`);
@@ -298,7 +255,7 @@ export class NFTMintService {
         mint,
         userPublicKey,
         false,
-        TOKEN_2022_PROGRAM_ID,
+        TOKEN_PROGRAM_ID,
         ASSOCIATED_TOKEN_PROGRAM_ID
       );
 
@@ -316,13 +273,16 @@ export class NFTMintService {
   async getNFTMetadata(mintAddress: string): Promise<any> {
     try {
       const mint = new PublicKey(mintAddress);
-      // Aquí podrías implementar la lectura de metadata desde la mint
-      // Por ahora retornamos info básica
       return {
         mint: mintAddress,
-        name: 'Gasless NFT',
-        description: 'NFT minted without gas fees',
-        image: `https://api.dicebear.com/7.x/shapes/svg?seed=${mintAddress}`
+        name: 'Simple Gasless NFT',
+        description: 'NFT minted without gas fees using SPL Token',
+        image: `https://api.dicebear.com/7.x/shapes/svg?seed=${mintAddress}`,
+        attributes: [
+          { trait_type: 'Type', value: 'Gasless NFT' },
+          { trait_type: 'Standard', value: 'SPL Token' },
+          { trait_type: 'Network', value: 'Solana' }
+        ]
       };
     } catch (error) {
       console.error('Error getting NFT metadata:', error);
