@@ -10,14 +10,14 @@ export class NFTClaimController {
   private relayerKeypair: Keypair;
 
   constructor() {
-    // Configurar conexión
+    // Configure connection
     const rpcUrl = process.env.SOLANA_RPC_URL || 'http://localhost:8899';
     this.connection = new Connection(rpcUrl, 'confirmed');
     
-    // Inicializar servicio de minteo
+    // Initialize NFT minting service
     this.nftMintService = new NFTMintService(this.connection);
     
-    // Cargar relayer keypair
+    // Load relayer keypair
     const relayerPrivateKey = process.env.RELAYER_PRIVATE_KEY;
     if (!relayerPrivateKey) {
       throw new Error('RELAYER_PRIVATE_KEY not configured');
@@ -34,11 +34,12 @@ export class NFTClaimController {
   }
 
   /**
-   * 🎯 ENDPOINT MÁGICO: Claim NFT Real sin firmas
+   * 🎯 MAGICAL ENDPOINT: Claim NFT without signatures (magical experience)
+   * This is the endpoint that the frontend calls automatically!
    */
   claimNFTMagical = async (req: Request, res: Response) => {
     try {
-      const { userPublicKey } = req.body;
+      const { userPublicKey, serviceId } = req.body;
 
       if (!userPublicKey) {
         return res.status(400).json({
@@ -49,9 +50,10 @@ export class NFTClaimController {
 
       console.log('🎯 MAGICAL NFT CLAIM STARTED');
       console.log(`👤 User: ${userPublicKey}`);
+      console.log(`🎨 Service: ${serviceId || 'demo-service'}`);
       console.log(`⚡ Relayer: ${this.relayerKeypair.publicKey.toString()}`);
 
-      // Validar que el usuario tenga una wallet válida
+      // Validate user has a valid wallet
       let user: PublicKey;
       try {
         user = new PublicKey(userPublicKey);
@@ -62,18 +64,18 @@ export class NFTClaimController {
         });
       }
 
-      // Verificar balance del relayer
+      // Check relayer balance
       const relayerBalance = await this.connection.getBalance(this.relayerKeypair.publicKey);
       console.log(`💰 Relayer balance: ${relayerBalance / 1e9} SOL`);
 
-      if (relayerBalance < 0.01 * 1e9) { // Menos de 0.01 SOL
+      if (relayerBalance < 0.01 * 1e9) { // Less than 0.01 SOL
         return res.status(500).json({
           success: false,
           error: 'Insufficient relayer balance for minting'
         });
       }
 
-      // Preparar metadata del NFT
+      // Prepare NFT metadata
       const nftMetadata = {
         name: `Gasless NFT #${Date.now()}`,
         symbol: 'GNFT',
@@ -83,7 +85,7 @@ export class NFTClaimController {
 
       console.log('🎨 Minting NFT with metadata:', nftMetadata);
 
-      // 🎨 MINTEAR NFT REAL
+      // 🎨 MINT REAL NFT
       const mintResult = await this.nftMintService.mintNFTToUser(
         user,
         this.relayerKeypair,
@@ -103,7 +105,7 @@ export class NFTClaimController {
       console.log(`📦 TX: ${mintResult.transactionSignature}`);
       console.log(`💰 Gas cost: ${mintResult.gasCost} lamports`);
 
-      // Verificar que el NFT llegó al usuario
+      // Verify NFT arrived to user (async)
       setTimeout(async () => {
         const verified = await this.nftMintService.verifyNFTOwnership(
           mintResult.mintAddress!,
@@ -137,7 +139,7 @@ export class NFTClaimController {
   };
 
   /**
-   * 🔐 ENDPOINT CON FIRMA: Claim NFT con validación de firma off-chain
+   * 🔐 ENDPOINT WITH SIGNATURE: Claim NFT with off-chain signature validation
    */
   claimNFTWithSignature = async (req: Request, res: Response) => {
     try {
@@ -160,7 +162,7 @@ export class NFTClaimController {
       console.log(`👤 User: ${userPublicKey}`);
       console.log(`📝 Message: ${message}`);
 
-      // Validar usuario
+      // Validate user
       let user: PublicKey;
       try {
         user = new PublicKey(userPublicKey);
@@ -171,7 +173,7 @@ export class NFTClaimController {
         });
       }
 
-      // Validar expiración
+      // Validate expiration
       if (expiry && Date.now() / 1000 > expiry) {
         return res.status(400).json({
           success: false,
@@ -179,13 +181,13 @@ export class NFTClaimController {
         });
       }
 
-      // Validar firma off-chain
+      // Validate off-chain signature
       try {
         const messageBytes = new TextEncoder().encode(message);
         const signatureBytes = bs58.decode(signature);
         
-        // Aquí podrías usar una librería como tweetnacl para validar la firma
-        // Por ahora asumimos que es válida si tiene el formato correcto
+        // Here you could use a library like tweetnacl to validate the signature
+        // For now we assume it's valid if it has the correct format
         console.log('✅ Signature validation passed');
       } catch (error) {
         return res.status(400).json({
@@ -194,7 +196,7 @@ export class NFTClaimController {
         });
       }
 
-      // Preparar metadata del NFT
+      // Prepare NFT metadata
       const nftMetadata = {
         name: `Signed Gasless NFT #${nonce || Date.now()}`,
         symbol: 'SGNFT',
@@ -202,7 +204,7 @@ export class NFTClaimController {
         image: `https://api.dicebear.com/7.x/shapes/svg?seed=${userPublicKey.slice(0, 8)}-signed`
       };
 
-      // 🎨 MINTEAR NFT REAL
+      // 🎨 MINT REAL NFT
       const mintResult = await this.nftMintService.mintNFTToUser(
         user,
         this.relayerKeypair,
@@ -243,7 +245,7 @@ export class NFTClaimController {
   };
 
   /**
-   * 📊 Obtener NFTs del usuario
+   * 📊 Get user NFTs
    */
   getUserNFTs = async (req: Request, res: Response) => {
     try {
@@ -266,8 +268,8 @@ export class NFTClaimController {
         });
       }
 
-      // Aquí podrías implementar la lógica para obtener todos los NFTs del usuario
-      // Por ahora retornamos una respuesta básica
+      // Here you could implement logic to get all user NFTs
+      // For now we return a basic response
       res.json({
         success: true,
         data: {
@@ -287,7 +289,7 @@ export class NFTClaimController {
   };
 
   /**
-   * 💰 Obtener estadísticas del relayer
+   * 💰 Get relayer statistics
    */
   getRelayerStats = async (req: Request, res: Response) => {
     try {
