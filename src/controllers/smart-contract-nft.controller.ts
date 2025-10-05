@@ -13,8 +13,8 @@ export class SmartContractNFTController {
 
   constructor() {
     // Configurar conexión
-    const rpcUrl = process.env.SOLANA_RPC_URL || 'http://localhost:8899';
-    this.connection = new Connection(rpcUrl, 'confirmed');
+    const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
+  this.connection = new Connection(rpcUrl, 'confirmed');
     
     // Cargar master wallet (la que paga todo)
     const masterPrivateKey = process.env.MASTER_WALLET_PRIVATE_KEY;

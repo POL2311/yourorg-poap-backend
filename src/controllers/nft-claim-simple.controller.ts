@@ -11,7 +11,7 @@ export class NFTClaimSimpleController {
 
   constructor() {
     // Configurar conexión
-    const rpcUrl = process.env.SOLANA_RPC_URL || 'http://localhost:8899';
+    const rpcUrl = process.env.SOLANA_RPC_URL || 'https://api.devnet.solana.com';
     this.connection = new Connection(rpcUrl, 'confirmed');
     
     // Inicializar servicio de minteo
