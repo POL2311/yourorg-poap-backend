@@ -5,6 +5,7 @@
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
+    "dev:multi": "ts-node src/index-multitenant.ts",
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "jest",
