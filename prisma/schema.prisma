@@ -1,0 +1,103 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Organizer {
+  id          String   @id @default(cuid())
+  email       String   @unique
+  name        String
+  company     String?
+  passwordHash String
+  isActive    Boolean  @default(true)
+  tier        String   @default("free") // free, pro, enterprise
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  apiKeys   ApiKey[]
+  campaigns Campaign[]
+  
+  @@map("organizers")
+}
+
+model ApiKey {
+  id          String   @id @default(cuid())
+  key         String   @unique
+  name        String
+  organizerId String
+  isActive    Boolean  @default(true)
+  lastUsedAt  DateTime?
+  createdAt   DateTime @default(now())
+  
+  // Relations
+  organizer   Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  
+  @@map("api_keys")
+}
+
+model Campaign {
+  id              String   @id @default(cuid())
+  name            String
+  description     String?
+  eventDate       DateTime
+  location        String?
+  imageUrl        String?
+  externalUrl     String?
+  secretCode      String?
+  maxClaims       Int?
+  isActive        Boolean  @default(true)
+  organizerId     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  // Metadata
+  metadata        Json?
+  
+  // Relations
+  organizer       Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  claims          Claim[]
+  
+  @@map("campaigns")
+}
+
+model Claim {
+  id                String   @id @default(cuid())
+  campaignId        String
+  userPublicKey     String
+  mintAddress       String?
+  tokenAccount      String?
+  transactionHash   String?
+  gasCost           Int?     // in lamports
+  claimedAt         DateTime @default(now())
+  
+  // Additional data
+  userAgent         String?
+  ipAddress         String?
+  metadata          Json?
+  
+  // Relations
+  campaign          Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  
+  // Prevent duplicate claims
+  @@unique([campaignId, userPublicKey])
+  @@map("claims")
+}
+
+model Usage {
+  id          String   @id @default(cuid())
+  organizerId String
+  date        DateTime @default(now())
+  claims      Int      @default(0)
+  gasCost     Int      @default(0) // in lamports
+  
+  @@unique([organizerId, date])
+  @@map("usage")
+}

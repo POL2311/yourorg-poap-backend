@@ -1,13 +1,18 @@
 {
   "name": "gasless-infrastructure-backend",
-  "version": "1.0.0",
-  "description": "Backend for Gasless Infrastructure with real NFT minting",
+  "version": "2.0.0",
+  "description": "Multi-tenant SaaS Backend for Gasless POAP Infrastructure",
   "main": "dist/index.js",
   "scripts": {
     "dev": "ts-node src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "jest"
+    "test": "jest",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:seed": "ts-node prisma/seed.ts"
   },
   "dependencies": {
     "@solana/spl-token": "^0.4.14",
@@ -18,12 +23,24 @@
     "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "helmet": "^7.1.0"
+    "helmet": "^7.1.0",
+    "@prisma/client": "^5.7.1",
+    "prisma": "^5.7.1",
+    "bcryptjs": "^2.4.3",
+    "jsonwebtoken": "^9.0.2",
+    "zod": "^3.22.4",
+    "uuid": "^9.0.1",
+    "express-rate-limit": "^7.1.5",
+    "morgan": "^1.10.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/node": "^20.10.4",
+    "@types/bcryptjs": "^2.4.6",
+    "@types/jsonwebtoken": "^9.0.5",
+    "@types/uuid": "^9.0.7",
+    "@types/morgan": "^1.9.9",
     "ts-node": "^10.9.1",
     "typescript": "^5.3.3"
   }
