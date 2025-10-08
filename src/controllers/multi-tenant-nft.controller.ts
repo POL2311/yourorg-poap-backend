@@ -134,12 +134,10 @@ export class MultiTenantNFTController {
       }
 
       // Validate secret code if required
-      if (campaign.secretCode && secretCode !== campaign.secretCode) {
-        return res.status(400).json({
-          success: false,
-          error: 'Invalid secret code for this campaign',
-        });
-      }
+      const normalizedSecret = (secretCode ?? undefined)?.trim();
+     if (campaign.secretCode && normalizedSecret !== campaign.secretCode) {
+      return res.status(400).json({ success:false, error:'Invalid secret code for this campaign' })
+    }
 
       // Check tier limits
       const organizerTier = campaign.organizer.tier;
@@ -400,6 +398,7 @@ export class MultiTenantNFTController {
           imageUrl: true,
           externalUrl: true,
           maxClaims: true,
+          isActive: true,     // 👈 AÑADIR ESTO
           organizer: {
             select: {
               name: true,

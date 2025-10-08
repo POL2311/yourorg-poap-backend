@@ -35,7 +35,7 @@ export const UpdateCampaignSchema = CreateCampaignSchema.partial();
 export const ClaimPOAPSchema = z.object({
   userPublicKey: z.string().min(32, 'Invalid Solana public key'),
   campaignId: z.string().min(1, 'Campaign ID is required'),
-  secretCode: z.string().optional(),
+  secretCode: z.string().optional().nullable(),
   metadata: z.record(z.any()).optional(),
 });
 
