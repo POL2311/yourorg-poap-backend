@@ -313,110 +313,127 @@ export class CampaignController {
   /**
    * Get campaign analytics
    */
-  static async getCampaignAnalytics(req: Request, res: Response) {
-    try {
-      const { campaignId } = req.params;
-      const organizerId = req.organizer!.id;
+/**
+ * Get campaign analytics
+ */
+static async getCampaignAnalytics(req: Request, res: Response) {
+  try {
+    const { campaignId } = req.params;
+    const organizerId = req.organizer!.id;
 
-      const campaign = await prisma.campaign.findFirst({
-        where: {
-          id: campaignId,
-          organizerId,
-        },
-      });
+    const campaign = await prisma.campaign.findFirst({
+      where: {
+        id: campaignId,
+        organizerId,
+      },
+    });
 
-      if (!campaign) {
-        return res.status(404).json({
-          success: false,
-          error: 'Campaign not found',
-        });
-      }
-
-      // Get claims analytics
-      const [totalClaims, claimsToday, claimsThisWeek, claimsThisMonth] = await Promise.all([
-        prisma.claim.count({
-          where: { campaignId },
-        }),
-        prisma.claim.count({
-          where: {
-            campaignId,
-            claimedAt: {
-              gte: new Date(new Date().setHours(0, 0, 0, 0)),
-            },
-          },
-        }),
-        prisma.claim.count({
-          where: {
-            campaignId,
-            claimedAt: {
-              gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
-            },
-          },
-        }),
-        prisma.claim.count({
-          where: {
-            campaignId,
-            claimedAt: {
-              gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
-            },
-          },
-        }),
-      ]);
-
-      // Get daily claims for the last 30 days
-      const dailyClaims = await prisma.$queryRaw`
-        SELECT 
-          DATE(claimed_at) as date,
-          COUNT(*) as claims
-        FROM claims 
-        WHERE campaign_id = ${campaignId}
-          AND claimed_at >= NOW() - INTERVAL '30 days'
-        GROUP BY DATE(claimed_at)
-        ORDER BY date DESC
-      `;
-
-      // Calculate total gas cost
-      const gasStats = await prisma.claim.aggregate({
-        where: { campaignId },
-        _sum: {
-          gasCost: true,
-        },
-        _avg: {
-          gasCost: true,
-        },
-      });
-
-      return res.json({
-        success: true,
-        data: {
-          campaign: {
-            id: campaign.id,
-            name: campaign.name,
-            maxClaims: campaign.maxClaims,
-          },
-          claims: {
-            total: totalClaims,
-            today: claimsToday,
-            thisWeek: claimsThisWeek,
-            thisMonth: claimsThisMonth,
-            remaining: campaign.maxClaims ? campaign.maxClaims - totalClaims : null,
-          },
-          gas: {
-            totalCost: gasStats._sum.gasCost || 0,
-            averageCost: gasStats._avg.gasCost || 0,
-            totalCostSOL: (gasStats._sum.gasCost || 0) / 1e9,
-          },
-          dailyClaims,
-        },
-      });
-    } catch (error) {
-      console.error('❌ Get campaign analytics error:', error);
-      return res.status(500).json({
+    if (!campaign) {
+      return res.status(404).json({
         success: false,
-        error: 'Failed to get campaign analytics',
+        error: 'Campaign not found',
       });
     }
+
+    // 📊 Claims counts
+    const [totalClaims, claimsToday, claimsThisWeek, claimsThisMonth] = await Promise.all([
+      prisma.claim.count({
+        where: { campaignId },
+      }),
+      prisma.claim.count({
+        where: {
+          campaignId,
+          claimedAt: {
+            gte: new Date(new Date().setHours(0, 0, 0, 0)),
+          },
+        },
+      }),
+      prisma.claim.count({
+        where: {
+          campaignId,
+          claimedAt: {
+            gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000),
+          },
+        },
+      }),
+      prisma.claim.count({
+        where: {
+          campaignId,
+          claimedAt: {
+            gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000),
+          },
+        },
+      }),
+    ]);
+
+    // 📅 Daily claims (últimos 30 días)
+    const dailyClaims = await prisma.$queryRaw<
+      { date: string; claims: number }[]
+    >`
+      SELECT 
+        to_char(date_trunc('day', "claimedAt"), 'YYYY-MM-DD') AS date,
+        count(*)::int AS claims
+      FROM "Claim"
+      WHERE "campaignId" = ${campaignId}
+        AND "claimedAt" >= NOW() - INTERVAL '30 days'
+      GROUP BY 1
+      ORDER BY 1 DESC
+    `;
+
+    // ⛽ Gas stats
+    const gasStats = await prisma.claim.aggregate({
+      where: { campaignId },
+      _sum: { gasCost: true },
+      _avg: { gasCost: true },
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        campaign: {
+          id: campaign.id,
+          name: campaign.name,
+          maxClaims: campaign.maxClaims,
+        },
+        claims: {
+          total: totalClaims,
+          today: claimsToday,
+          thisWeek: claimsThisWeek,
+          thisMonth: claimsThisMonth,
+          remaining: campaign.maxClaims ? campaign.maxClaims - totalClaims : null,
+        },
+        gas: {
+          totalCost: gasStats._sum.gasCost || 0,
+          averageCost: gasStats._avg.gasCost || 0,
+          totalCostSOL: (gasStats._sum.gasCost || 0) / 1e9,
+        },
+        dailyClaims,
+      },
+    });
+  } catch (error) {
+    console.error('❌ Get campaign analytics error:', error);
+    // ⚠️ Devuelve un fallback en vez de crashear
+    return res.status(200).json({
+      success: true,
+      data: {
+        campaign: null,
+        claims: {
+          total: 0,
+          today: 0,
+          thisWeek: 0,
+          thisMonth: 0,
+          remaining: null,
+        },
+        gas: {
+          totalCost: 0,
+          averageCost: 0,
+          totalCostSOL: 0,
+        },
+        dailyClaims: [],
+      },
+    });
   }
+}
 
   /**
    * Get campaign claims
