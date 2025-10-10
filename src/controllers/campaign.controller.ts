@@ -301,44 +301,97 @@ export class CampaignController {
         });
       }
 
-      // Get claims over time (last 30 days)
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-      
-      const [totalClaims, uniqueUsers, recentClaims] = await Promise.all([
+      // Get time periods
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const thisWeek = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+      const thisMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+
+      // Get claims data
+      const [
+        totalClaims,
+        todayClaims,
+        weekClaims,
+        monthClaims,
+        recentClaims,
+        totalGasCost
+      ] = await Promise.all([
+        // Total claims
         prisma.claim.count({ where: { campaignId } }),
-        prisma.claim.groupBy({
-          by: ['userPublicKey'],
-          where: { campaignId }
-        }).then(groups => groups.length),
+        
+        // Today's claims
+        prisma.claim.count({
+          where: {
+            campaignId,
+            claimedAt: { gte: today }
+          }
+        }),
+        
+        // This week's claims
+        prisma.claim.count({
+          where: {
+            campaignId,
+            claimedAt: { gte: thisWeek }
+          }
+        }),
+        
+        // This month's claims
+        prisma.claim.count({
+          where: {
+            campaignId,
+            claimedAt: { gte: thisMonth }
+          }
+        }),
+        
+        // Recent claims for chart (last 30 days)
         prisma.claim.findMany({
           where: {
             campaignId,
             claimedAt: { gte: thirtyDaysAgo }
           },
           orderBy: { claimedAt: 'asc' }
+        }),
+        
+        // Total gas cost
+        prisma.claim.aggregate({
+          where: { campaignId },
+          _sum: { gasCost: true }
         })
       ]);
 
-      // Process data for charts
+      // Calculate remaining claims
+      const remaining = campaign.maxClaims ? Math.max(0, campaign.maxClaims - totalClaims) : null;
+
+      // Calculate average gas cost
+      const totalGas = totalGasCost._sum.gasCost || 0;
+      const averageGas = totalClaims > 0 ? totalGas / totalClaims : 0;
+
+      // Process daily claims for chart
       const dailyClaims = this.groupClaimsByDay(recentClaims);
 
+      // ✅ Fixed: Return data in the format expected by frontend
       return res.json({
         success: true,
         data: {
           campaign: {
             id: campaign.id,
             name: campaign.name,
-            description: campaign.description,
-            eventDate: campaign.eventDate
+            maxClaims: campaign.maxClaims
           },
-          stats: {
-            totalClaims,
-            uniqueUsers,
-            claimRate: campaign.maxClaims ? (totalClaims / campaign.maxClaims) * 100 : null
+          claims: {
+            total: totalClaims,
+            today: todayClaims,
+            thisWeek: weekClaims,
+            thisMonth: monthClaims,
+            remaining: remaining
           },
-          charts: {
-            dailyClaims
-          }
+          gas: {
+            totalCost: totalGas,
+            averageCost: averageGas,
+            totalCostSOL: totalGas / 1e9
+          },
+          dailyClaims: dailyClaims
         }
       });
     } catch (error) {
