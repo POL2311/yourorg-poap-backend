@@ -1,0 +1,44 @@
+// Add to prisma/schema.prisma
+
+model NFTMint {
+  id                    String   @id @default(cuid())
+  mintAddress          String   @unique
+  userPublicKey        String
+  transactionSignature String   @unique
+  metadata             Json
+  gasCost              Int
+  relayerPublicKey     String
+  serviceId            String?
+  eventId              String?
+  eventName            String?
+  network              String   @default("devnet")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("nft_mints")
+}
+
+model RelayerStats {
+  id               String   @id @default(cuid())
+  relayerPublicKey String   @unique
+  totalMints       Int      @default(0)
+  totalGasPaid     BigInt   @default(0)
+  currentBalance   BigInt   @default(0)
+  lastActivity     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("relayer_stats")
+}
+
+model UserActivity {
+  id            String   @id @default(cuid())
+  userPublicKey String
+  action        String   // "mint_nft", "claim_poap", etc.
+  details       Json
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  @@map("user_activity")
+}
