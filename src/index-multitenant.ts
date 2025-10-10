@@ -1,4 +1,4 @@
-// src/index-multitenant.ts - FIXED VERSION
+// src/index-multitenant.ts - ENHANCED VERSION WITH SYSTEM MONITORING
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
@@ -11,6 +11,7 @@ import { AuthController } from './controllers/auth.controller';
 import { CampaignController } from './controllers/campaign.controller';
 import { MultiTenantNFTController } from './controllers/multi-tenant-nft.controller';
 import { NFTClaimController } from './controllers/nft-claim.controller'; // Legacy support
+import { SystemController } from './controllers/system.controller';
 
 // Middleware
 import { authenticate, authenticateApiKey } from './middleware/auth.middleware';
@@ -59,29 +60,19 @@ try {
   process.exit(1);
 }
 
-// ===== HEALTH CHECK =====
+// ===== SYSTEM MONITORING ROUTES =====
 
-app.get('/health', async (req, res) => {
-  try {
-    res.json({
-      ok: true,
-      uptime: process.uptime(),
-      service: 'Multi-Tenant POAP Infrastructure - SaaS Backend',
-      timestamp: new Date().toISOString(),
-      version: '2.0.0',
-      database: 'not connected (demo mode)',
-      relayerConfigured: !!process.env.RELAYER_PRIVATE_KEY,
-      rpcUrl: process.env.SOLANA_RPC_URL,
-      network: 'devnet',
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      error: 'Health check failed',
-      timestamp: new Date().toISOString(),
-    });
-  }
-});
+// Comprehensive health check
+app.get('/health', SystemController.healthCheck);
+
+// System statistics
+app.get('/api/system/stats', SystemController.getSystemStats);
+
+// Database migration status
+app.get('/api/system/migration-status', SystemController.getMigrationStatus);
+
+// Test database operations
+app.get('/api/system/test-db', SystemController.testDatabaseOperations);
 
 // ===== AUTHENTICATION ROUTES =====
 
@@ -108,7 +99,7 @@ app.get('/api/campaigns/:campaignId/claims', authenticate, CampaignController.ge
 
 // ===== PUBLIC POAP CLAIMING ROUTES =====
 
-// Main POAP claiming endpoint (simplified - no API key required for demo)
+// Main POAP claiming endpoint with secret code validation
 app.post('/api/poap/claim', multiTenantNFTController.claimPOAP);
 
 // Public campaign info (no auth required)
@@ -133,15 +124,15 @@ app.get('/api/nft/user/:userPublicKey', legacyNFTController.getUserNFTs);
 app.get('/api/permits', (req, res) => {
   res.json({
     ok: true,
-    message: 'Multi-Tenant POAP Infrastructure API v2.0 (Demo Mode)',
+    message: 'Multi-Tenant POAP Infrastructure API v2.0',
     network: 'devnet',
     migration: {
       notice: 'This API has been upgraded to multi-tenant SaaS platform',
       newEndpoints: [
-        'POST /api/auth/register - Register as organizer (demo)',
-        'POST /api/auth/login - Login organizer (demo)',
-        'POST /api/campaigns - Create POAP campaign (demo)',
-        'POST /api/poap/claim - Claim POAP (demo)',
+        'POST /api/auth/register - Register as organizer',
+        'POST /api/auth/login - Login organizer',
+        'POST /api/campaigns - Create POAP campaign',
+        'POST /api/poap/claim - Claim POAP with secret code validation',
       ],
       legacySupport: [
         'POST /api/nft/claim-magical - Legacy demo endpoint',
@@ -161,56 +152,92 @@ app.get('/api/docs', (req, res) => {
   res.json({
     title: 'Multi-Tenant POAP Infrastructure API',
     version: '2.0.0',
-    description: 'SaaS platform for gasless POAP minting on Solana (Demo Mode)',
+    description: 'SaaS platform for gasless POAP minting on Solana with secret code validation',
     baseUrl: `${req.protocol}://${req.get('host')}/api`,
-    note: 'Currently running in demo mode - database integration needed for full functionality',
     authentication: {
       jwt: {
-        description: 'For organizer dashboard operations (demo)',
+        description: 'For organizer dashboard operations',
         header: 'Authorization: Bearer <token>',
         endpoints: ['/auth/*', '/campaigns/*'],
       },
       apiKey: {
-        description: 'For POAP claiming operations (not required in demo)',
+        description: 'For POAP claiming operations (optional)',
         header: 'Authorization: ApiKey <key>',
         endpoints: ['/poap/claim'],
       },
     },
+    features: {
+      secretCodeValidation: {
+        description: 'Campaigns can require secret codes for claiming',
+        implementation: 'Set secretCode field when creating campaigns',
+        validation: 'Users must provide correct code to claim POAPs',
+      },
+      gaslessMinting: {
+        description: 'Users pay no gas fees for POAP minting',
+        implementation: 'Relayer pays all transaction costs',
+        network: 'Solana Devnet',
+      },
+      multiTenant: {
+        description: 'Multiple organizers can create independent campaigns',
+        implementation: 'JWT-based authentication and authorization',
+        isolation: 'Complete data isolation between organizers',
+      },
+    },
     endpoints: {
+      system: {
+        'GET /health': 'Comprehensive system health check',
+        'GET /system/stats': 'System statistics and metrics',
+        'GET /system/migration-status': 'Database migration status',
+        'GET /system/test-db': 'Test database operations',
+      },
       auth: {
-        'POST /auth/register': 'Register new organizer (demo)',
-        'POST /auth/login': 'Login organizer (demo)',
-        'GET /auth/profile': 'Get organizer profile (demo)',
-        'POST /auth/api-keys': 'Create API key (demo)',
-        'GET /auth/api-keys': 'List API keys (demo)',
-        'DELETE /auth/api-keys/:keyId': 'Deactivate API key (demo)',
+        'POST /auth/register': 'Register new organizer',
+        'POST /auth/login': 'Login organizer',
+        'GET /auth/profile': 'Get organizer profile',
+        'POST /auth/api-keys': 'Create API key',
+        'GET /auth/api-keys': 'List API keys',
+        'DELETE /auth/api-keys/:keyId': 'Deactivate API key',
       },
       campaigns: {
-        'POST /campaigns': 'Create campaign (demo)',
-        'GET /campaigns': 'List campaigns (demo)',
-        'GET /campaigns/:id': 'Get campaign (demo)',
-        'PUT /campaigns/:id': 'Update campaign (demo)',
-        'DELETE /campaigns/:id': 'Delete campaign (demo)',
-        'GET /campaigns/:id/analytics': 'Campaign analytics (demo)',
-        'GET /campaigns/:id/claims': 'Campaign claims (demo)',
+        'POST /campaigns': 'Create campaign (with optional secret code)',
+        'GET /campaigns': 'List campaigns',
+        'GET /campaigns/:id': 'Get campaign',
+        'PUT /campaigns/:id': 'Update campaign',
+        'DELETE /campaigns/:id': 'Delete campaign',
+        'GET /campaigns/:id/analytics': 'Campaign analytics',
+        'GET /campaigns/:id/claims': 'Campaign claims',
       },
       poap: {
-        'POST /poap/claim': 'Claim POAP (working with real NFT minting)',
-        'GET /campaigns/:id/public': 'Public campaign info (demo)',
-        'GET /poap/user/:userPublicKey': 'User POAPs (demo)',
+        'POST /poap/claim': 'Claim POAP (with secret code validation)',
+        'GET /campaigns/:id/public': 'Public campaign info',
+        'GET /poap/user/:userPublicKey': 'User POAPs',
       },
-      system: {
-        'GET /health': 'Health check',
+      relayer: {
         'GET /relayer/stats': 'Relayer statistics',
       },
     },
     examples: {
-      claimPOAP: {
+      createCampaignWithSecretCode: {
+        url: 'POST /api/campaigns',
+        headers: {
+          'Authorization': 'Bearer <jwt_token>',
+          'Content-Type': 'application/json',
+        },
+        body: {
+          name: 'Solana Breakpoint 2024',
+          description: 'Official POAP for Solana Breakpoint conference',
+          eventDate: '2024-09-20T10:00:00Z',
+          location: 'Amsterdam, Netherlands',
+          secretCode: 'BREAKPOINT2024',
+          maxClaims: 1000,
+        },
+      },
+      claimPOAPWithSecretCode: {
         url: 'POST /api/poap/claim',
         body: {
           userPublicKey: 'user_solana_public_key',
-          campaignId: 'demo_campaign',
-          secretCode: 'optional_secret_code',
+          campaignId: 'campaign_id',
+          secretCode: 'BREAKPOINT2024',
         },
       },
       legacyNFT: {
@@ -241,11 +268,12 @@ app.use('*', (req, res) => {
     success: false,
     error: 'Endpoint not found',
     availableEndpoints: [
-      'GET /health',
-      'GET /api/docs',
-      'POST /api/nft/claim-magical (working)',
-      'POST /api/poap/claim (working)',
-      'GET /api/relayer/stats (working)',
+      'GET /health - Comprehensive health check',
+      'GET /api/docs - API documentation',
+      'POST /api/nft/claim-magical - Legacy NFT minting',
+      'POST /api/poap/claim - POAP claiming with secret codes',
+      'GET /api/relayer/stats - Relayer statistics',
+      'GET /api/system/stats - System statistics',
     ],
   });
 });
@@ -254,17 +282,20 @@ app.use('*', (req, res) => {
 
 const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, () => {
-  console.log('🚀 MULTI-TENANT POAP INFRASTRUCTURE STARTED (DEMO MODE)');
+  console.log('🚀 MULTI-TENANT POAP INFRASTRUCTURE STARTED');
   console.log(`📍 URL: http://localhost:${PORT}`);
   console.log(`📚 API Docs: http://localhost:${PORT}/api/docs`);
   console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
+  console.log(`📊 System Stats: http://localhost:${PORT}/api/system/stats`);
   console.log('');
-  console.log('🎯 WORKING ENDPOINTS:');
-  console.log(`   🎨 Legacy NFT: POST /api/nft/claim-magical`);
-  console.log(`   🏅 POAP Claim: POST /api/poap/claim`);
-  console.log(`   💰 Relayer Stats: GET /api/relayer/stats`);
+  console.log('🎯 KEY FEATURES:');
+  console.log('   🔐 Secret Code Validation - Campaigns can require access codes');
+  console.log('   🎨 Gasless NFT Minting - Users pay no fees');
+  console.log('   🏢 Multi-Tenant SaaS - Multiple organizers supported');
+  console.log('   📊 Real-time Analytics - Campaign performance tracking');
+  console.log('   🛡️ Comprehensive Security - JWT auth + input validation');
   console.log('');
-  console.log('⚠️  DEMO MODE: Database integration needed for full functionality');
   console.log('🌐 Network: Solana Devnet');
-  console.log('🎨 Ready for gasless NFT/POAP minting!');
+  console.log('💾 Database: PostgreSQL with Prisma ORM');
+  console.log('🎨 Ready for production POAP campaigns!');
 });
