@@ -11,9 +11,15 @@ export interface AuthenticatedRequest extends Request {
     organizationId: string;
     role: string;
   };
+  apiKey?: {
+    id: string;
+    organizationId: string;
+    name: string;
+  };
 }
 
-export const authenticateToken = async (
+// JWT Authentication (for dashboard/organizer operations)
+export const authenticate = async (
   req: AuthenticatedRequest,
   res: Response,
   next: NextFunction
@@ -50,6 +56,66 @@ export const authenticateToken = async (
     return res.status(403).json({ success: false, error: 'Invalid token' });
   }
 };
+
+// API Key Authentication (for POAP claiming operations)
+export const authenticateApiKey = async (
+  req: AuthenticatedRequest,
+  res: Response,
+  next: NextFunction
+) => {
+  const authHeader = req.headers['authorization'];
+  const apiKey = authHeader && authHeader.startsWith('ApiKey ') 
+    ? authHeader.substring(7) 
+    : null;
+
+  if (!apiKey) {
+    return res.status(401).json({ 
+      success: false, 
+      error: 'API key required. Use header: Authorization: ApiKey <your-key>' 
+    });
+  }
+
+  try {
+    // Find active API key
+    const keyRecord = await prisma.apiKey.findFirst({
+      where: { 
+        key: apiKey,
+        isActive: true 
+      },
+      include: { organization: true }
+    });
+
+    if (!keyRecord || !keyRecord.organization.isActive) {
+      return res.status(401).json({ 
+        success: false, 
+        error: 'Invalid or inactive API key' 
+      });
+    }
+
+    // Update last used timestamp
+    await prisma.apiKey.update({
+      where: { id: keyRecord.id },
+      data: { lastUsedAt: new Date() }
+    });
+
+    req.apiKey = {
+      id: keyRecord.id,
+      organizationId: keyRecord.organizationId,
+      name: keyRecord.name
+    };
+
+    next();
+  } catch (error) {
+    console.error('API key authentication error:', error);
+    return res.status(500).json({ 
+      success: false, 
+      error: 'Authentication error' 
+    });
+  }
+};
+
+// Legacy alias for backward compatibility
+export const authenticateToken = authenticate;
 
 export const requireRole = (roles: string[]) => {
   return (req: AuthenticatedRequest, res: Response, next: NextFunction) => {

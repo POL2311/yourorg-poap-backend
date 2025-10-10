@@ -24,7 +24,7 @@ const createCampaignSchema = z.object({
 });
 
 export class CampaignController {
-  async createCampaign(req: AuthenticatedRequest, res: Response) {
+  static async createCampaign(req: AuthenticatedRequest, res: Response) {
     try {
       const validatedData = createCampaignSchema.parse(req.body);
       
@@ -58,7 +58,7 @@ export class CampaignController {
     }
   }
 
-  async getCampaigns(req: AuthenticatedRequest, res: Response) {
+  static async listCampaigns(req: AuthenticatedRequest, res: Response) {
     try {
       const campaigns = await prisma.campaign.findMany({
         where: {
@@ -85,13 +85,13 @@ export class CampaignController {
     }
   }
 
-  async getCampaign(req: AuthenticatedRequest, res: Response) {
+  static async getCampaign(req: AuthenticatedRequest, res: Response) {
     try {
-      const { id } = req.params;
+      const { campaignId } = req.params;
 
       const campaign = await prisma.campaign.findFirst({
         where: {
-          id,
+          id: campaignId,
           organizationId: req.user!.organizationId
         },
         include: {
@@ -125,7 +125,207 @@ export class CampaignController {
     }
   }
 
-  async claimPOAP(req: Request, res: Response) {
+  static async updateCampaign(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { campaignId } = req.params;
+      const updateData = req.body;
+
+      // Verify campaign belongs to organization
+      const existingCampaign = await prisma.campaign.findFirst({
+        where: {
+          id: campaignId,
+          organizationId: req.user!.organizationId
+        }
+      });
+
+      if (!existingCampaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      const updatedCampaign = await prisma.campaign.update({
+        where: { id: campaignId },
+        data: {
+          ...updateData,
+          eventDate: updateData.eventDate ? new Date(updateData.eventDate) : undefined,
+          updatedAt: new Date()
+        }
+      });
+
+      return res.json({
+        success: true,
+        data: updatedCampaign
+      });
+    } catch (error) {
+      console.error('Error updating campaign:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to update campaign'
+      });
+    }
+  }
+
+  static async deleteCampaign(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { campaignId } = req.params;
+
+      // Verify campaign belongs to organization
+      const existingCampaign = await prisma.campaign.findFirst({
+        where: {
+          id: campaignId,
+          organizationId: req.user!.organizationId
+        }
+      });
+
+      if (!existingCampaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      await prisma.campaign.delete({
+        where: { id: campaignId }
+      });
+
+      return res.json({
+        success: true,
+        message: 'Campaign deleted successfully'
+      });
+    } catch (error) {
+      console.error('Error deleting campaign:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to delete campaign'
+      });
+    }
+  }
+
+  static async getCampaignAnalytics(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { campaignId } = req.params;
+      const organizationId = req.user!.organizationId;
+
+      // Verify campaign belongs to organization
+      const campaign = await prisma.campaign.findFirst({
+        where: { id: campaignId, organizationId }
+      });
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      // Get claims over time (last 30 days)
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      
+      const [totalClaims, uniqueUsers, recentClaims] = await Promise.all([
+        prisma.poapClaim.count({ where: { campaignId } }),
+        prisma.poapClaim.groupBy({
+          by: ['userPublicKey'],
+          where: { campaignId }
+        }).then(groups => groups.length),
+        prisma.poapClaim.findMany({
+          where: {
+            campaignId,
+            claimedAt: { gte: thirtyDaysAgo }
+          },
+          orderBy: { claimedAt: 'asc' }
+        })
+      ]);
+
+      // Process data for charts
+      const dailyClaims = this.groupClaimsByDay(recentClaims);
+
+      return res.json({
+        success: true,
+        data: {
+          campaign: {
+            id: campaign.id,
+            name: campaign.name,
+            description: campaign.description,
+            eventDate: campaign.eventDate
+          },
+          stats: {
+            totalClaims,
+            uniqueUsers,
+            claimRate: campaign.maxClaims ? (totalClaims / campaign.maxClaims) * 100 : null
+          },
+          charts: {
+            dailyClaims
+          }
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching campaign analytics:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch campaign analytics'
+      });
+    }
+  }
+
+  static async getCampaignClaims(req: AuthenticatedRequest, res: Response) {
+    try {
+      const { campaignId } = req.params;
+      const organizationId = req.user!.organizationId;
+
+      // Verify campaign belongs to organization
+      const campaign = await prisma.campaign.findFirst({
+        where: { id: campaignId, organizationId }
+      });
+
+      if (!campaign) {
+        return res.status(404).json({
+          success: false,
+          error: 'Campaign not found'
+        });
+      }
+
+      const claims = await prisma.poapClaim.findMany({
+        where: { campaignId },
+        orderBy: { claimedAt: 'desc' },
+        take: 100 // Limit to last 100 claims
+      });
+
+      return res.json({
+        success: true,
+        data: {
+          campaign: {
+            id: campaign.id,
+            name: campaign.name
+          },
+          claims
+        }
+      });
+    } catch (error) {
+      console.error('Error fetching campaign claims:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to fetch campaign claims'
+      });
+    }
+  }
+
+  private static groupClaimsByDay(claims: any[]) {
+    const grouped = new Map<string, number>();
+    
+    claims.forEach(claim => {
+      const date = new Date(claim.claimedAt).toISOString().split('T')[0];
+      grouped.set(date, (grouped.get(date) || 0) + 1);
+    });
+
+    return Array.from(grouped.entries()).map(([date, count]) => ({
+      date,
+      claims: count
+    }));
+  }
+
+  static async claimPOAP(req: Request, res: Response) {
     try {
       const { campaignId } = req.params;
       const { userPublicKey, secretCode } = req.body;

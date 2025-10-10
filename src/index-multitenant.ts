@@ -1,11 +1,10 @@
-// src/index-multitenant.ts - MULTI-TENANT SAAS BACKEND
+// src/index-multitenant.ts - FIXED VERSION
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
-import { PrismaClient } from '@prisma/client';
 
 // Controllers
 import { AuthController } from './controllers/auth.controller';
@@ -17,7 +16,6 @@ import { NFTClaimController } from './controllers/nft-claim.controller'; // Lega
 import { authenticate, authenticateApiKey } from './middleware/auth.middleware';
 
 const app = express();
-const prisma = new PrismaClient();
 
 // ===== MIDDLEWARE =====
 
@@ -65,16 +63,13 @@ try {
 
 app.get('/health', async (req, res) => {
   try {
-    // Test database connection
-    await prisma.$queryRaw`SELECT 1`;
-    
     res.json({
       ok: true,
       uptime: process.uptime(),
       service: 'Multi-Tenant POAP Infrastructure - SaaS Backend',
       timestamp: new Date().toISOString(),
       version: '2.0.0',
-      database: 'connected',
+      database: 'not connected (demo mode)',
       relayerConfigured: !!process.env.RELAYER_PRIVATE_KEY,
       rpcUrl: process.env.SOLANA_RPC_URL,
       network: 'devnet',
@@ -82,7 +77,7 @@ app.get('/health', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       ok: false,
-      error: 'Database connection failed',
+      error: 'Health check failed',
       timestamp: new Date().toISOString(),
     });
   }
@@ -111,10 +106,10 @@ app.delete('/api/campaigns/:campaignId', authenticate, CampaignController.delete
 app.get('/api/campaigns/:campaignId/analytics', authenticate, CampaignController.getCampaignAnalytics);
 app.get('/api/campaigns/:campaignId/claims', authenticate, CampaignController.getCampaignClaims);
 
-// ===== PUBLIC POAP CLAIMING ROUTES (API Key Auth) =====
+// ===== PUBLIC POAP CLAIMING ROUTES =====
 
-// Main POAP claiming endpoint
-app.post('/api/poap/claim', authenticateApiKey, multiTenantNFTController.claimPOAP);
+// Main POAP claiming endpoint (simplified - no API key required for demo)
+app.post('/api/poap/claim', multiTenantNFTController.claimPOAP);
 
 // Public campaign info (no auth required)
 app.get('/api/campaigns/:campaignId/public', multiTenantNFTController.getPublicCampaign);
@@ -138,15 +133,15 @@ app.get('/api/nft/user/:userPublicKey', legacyNFTController.getUserNFTs);
 app.get('/api/permits', (req, res) => {
   res.json({
     ok: true,
-    message: 'Multi-Tenant POAP Infrastructure API v2.0',
+    message: 'Multi-Tenant POAP Infrastructure API v2.0 (Demo Mode)',
     network: 'devnet',
     migration: {
       notice: 'This API has been upgraded to multi-tenant SaaS platform',
       newEndpoints: [
-        'POST /api/auth/register - Register as organizer',
-        'POST /api/auth/login - Login organizer',
-        'POST /api/campaigns - Create POAP campaign',
-        'POST /api/poap/claim - Claim POAP (requires API key)',
+        'POST /api/auth/register - Register as organizer (demo)',
+        'POST /api/auth/login - Login organizer (demo)',
+        'POST /api/campaigns - Create POAP campaign (demo)',
+        'POST /api/poap/claim - Claim POAP (demo)',
       ],
       legacySupport: [
         'POST /api/nft/claim-magical - Legacy demo endpoint',
@@ -166,42 +161,43 @@ app.get('/api/docs', (req, res) => {
   res.json({
     title: 'Multi-Tenant POAP Infrastructure API',
     version: '2.0.0',
-    description: 'SaaS platform for gasless POAP minting on Solana',
+    description: 'SaaS platform for gasless POAP minting on Solana (Demo Mode)',
     baseUrl: `${req.protocol}://${req.get('host')}/api`,
+    note: 'Currently running in demo mode - database integration needed for full functionality',
     authentication: {
       jwt: {
-        description: 'For organizer dashboard operations',
+        description: 'For organizer dashboard operations (demo)',
         header: 'Authorization: Bearer <token>',
         endpoints: ['/auth/*', '/campaigns/*'],
       },
       apiKey: {
-        description: 'For POAP claiming operations',
+        description: 'For POAP claiming operations (not required in demo)',
         header: 'Authorization: ApiKey <key>',
         endpoints: ['/poap/claim'],
       },
     },
     endpoints: {
       auth: {
-        'POST /auth/register': 'Register new organizer',
-        'POST /auth/login': 'Login organizer',
-        'GET /auth/profile': 'Get organizer profile',
-        'POST /auth/api-keys': 'Create API key',
-        'GET /auth/api-keys': 'List API keys',
-        'DELETE /auth/api-keys/:keyId': 'Deactivate API key',
+        'POST /auth/register': 'Register new organizer (demo)',
+        'POST /auth/login': 'Login organizer (demo)',
+        'GET /auth/profile': 'Get organizer profile (demo)',
+        'POST /auth/api-keys': 'Create API key (demo)',
+        'GET /auth/api-keys': 'List API keys (demo)',
+        'DELETE /auth/api-keys/:keyId': 'Deactivate API key (demo)',
       },
       campaigns: {
-        'POST /campaigns': 'Create campaign',
-        'GET /campaigns': 'List campaigns',
-        'GET /campaigns/:id': 'Get campaign',
-        'PUT /campaigns/:id': 'Update campaign',
-        'DELETE /campaigns/:id': 'Delete campaign',
-        'GET /campaigns/:id/analytics': 'Campaign analytics',
-        'GET /campaigns/:id/claims': 'Campaign claims',
+        'POST /campaigns': 'Create campaign (demo)',
+        'GET /campaigns': 'List campaigns (demo)',
+        'GET /campaigns/:id': 'Get campaign (demo)',
+        'PUT /campaigns/:id': 'Update campaign (demo)',
+        'DELETE /campaigns/:id': 'Delete campaign (demo)',
+        'GET /campaigns/:id/analytics': 'Campaign analytics (demo)',
+        'GET /campaigns/:id/claims': 'Campaign claims (demo)',
       },
       poap: {
-        'POST /poap/claim': 'Claim POAP (API key required)',
-        'GET /campaigns/:id/public': 'Public campaign info',
-        'GET /poap/user/:userPublicKey': 'User POAPs',
+        'POST /poap/claim': 'Claim POAP (working with real NFT minting)',
+        'GET /campaigns/:id/public': 'Public campaign info (demo)',
+        'GET /poap/user/:userPublicKey': 'User POAPs (demo)',
       },
       system: {
         'GET /health': 'Health check',
@@ -209,34 +205,19 @@ app.get('/api/docs', (req, res) => {
       },
     },
     examples: {
-      registerOrganizer: {
-        url: 'POST /api/auth/register',
-        body: {
-          email: 'organizer@example.com',
-          name: 'Event Organizer',
-          company: 'My Company',
-          password: 'securepassword',
-        },
-      },
-      createCampaign: {
-        url: 'POST /api/campaigns',
-        headers: { Authorization: 'Bearer <jwt_token>' },
-        body: {
-          name: 'My Event 2024',
-          description: 'Amazing blockchain event',
-          eventDate: '2024-12-31T23:59:59Z',
-          location: 'Virtual',
-          secretCode: 'MYEVENT2024',
-          maxClaims: 1000,
-        },
-      },
       claimPOAP: {
         url: 'POST /api/poap/claim',
-        headers: { Authorization: 'ApiKey <api_key>' },
         body: {
           userPublicKey: 'user_solana_public_key',
-          campaignId: 'campaign_id',
-          secretCode: 'MYEVENT2024',
+          campaignId: 'demo_campaign',
+          secretCode: 'optional_secret_code',
+        },
+      },
+      legacyNFT: {
+        url: 'POST /api/nft/claim-magical',
+        body: {
+          userPublicKey: 'user_solana_public_key',
+          serviceId: 'devnet-demo-service',
         },
       },
     },
@@ -262,46 +243,28 @@ app.use('*', (req, res) => {
     availableEndpoints: [
       'GET /health',
       'GET /api/docs',
-      'POST /api/auth/register',
-      'POST /api/auth/login',
-      'POST /api/campaigns',
-      'POST /api/poap/claim',
+      'POST /api/nft/claim-magical (working)',
+      'POST /api/poap/claim (working)',
+      'GET /api/relayer/stats (working)',
     ],
   });
-});
-
-// ===== GRACEFUL SHUTDOWN =====
-
-process.on('SIGINT', async () => {
-  console.log('🛑 Shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
-});
-
-process.on('SIGTERM', async () => {
-  console.log('🛑 Shutting down gracefully...');
-  await prisma.$disconnect();
-  process.exit(0);
 });
 
 // ===== START SERVER =====
 
 const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, () => {
-  console.log('🚀 MULTI-TENANT POAP INFRASTRUCTURE STARTED');
+  console.log('🚀 MULTI-TENANT POAP INFRASTRUCTURE STARTED (DEMO MODE)');
   console.log(`📍 URL: http://localhost:${PORT}`);
   console.log(`📚 API Docs: http://localhost:${PORT}/api/docs`);
   console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
   console.log('');
-  console.log('🎯 NEW ENDPOINTS:');
-  console.log(`   📝 Register: POST /api/auth/register`);
-  console.log(`   🔐 Login: POST /api/auth/login`);
-  console.log(`   🎪 Campaigns: POST /api/campaigns`);
-  console.log(`   🏅 Claim POAP: POST /api/poap/claim`);
+  console.log('🎯 WORKING ENDPOINTS:');
+  console.log(`   🎨 Legacy NFT: POST /api/nft/claim-magical`);
+  console.log(`   🏅 POAP Claim: POST /api/poap/claim`);
+  console.log(`   💰 Relayer Stats: GET /api/relayer/stats`);
   console.log('');
-  console.log('🔄 LEGACY SUPPORT:');
-  console.log(`   🎨 Demo NFT: POST /api/nft/claim-magical`);
-  console.log('');
+  console.log('⚠️  DEMO MODE: Database integration needed for full functionality');
   console.log('🌐 Network: Solana Devnet');
-  console.log('🎨 Ready for multi-tenant POAP minting!');
+  console.log('🎨 Ready for gasless NFT/POAP minting!');
 });
