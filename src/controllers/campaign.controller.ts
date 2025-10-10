@@ -7,15 +7,14 @@ const prisma = new PrismaClient();
 
 const createCampaignSchema = z.object({
   name: z.string().min(1).max(100),
-  description: z.string().max(500),
+  description: z.string().max(500).optional(),
   eventDate: z.string().datetime(),
-  location: z.string().max(100),
+  location: z.string().max(100).optional(),
+  imageUrl: z.string().url().optional(),
+  externalUrl: z.string().url().optional(),
   maxClaims: z.number().int().positive().optional(),
   secretCode: z.string().min(4).max(50).optional(),
-  isActive: z.boolean().default(true),
   metadata: z.object({
-    image: z.string().url().optional(),
-    externalUrl: z.string().url().optional(),
     attributes: z.array(z.object({
       trait_type: z.string(),
       value: z.string()
@@ -27,13 +26,21 @@ export class CampaignController {
   static async createCampaign(req: AuthenticatedRequest, res: Response) {
     try {
       const validatedData = createCampaignSchema.parse(req.body);
+      const organizerId = req.organizer?.id || req.user?.id;
+
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
       
       const campaign = await prisma.campaign.create({
         data: {
           ...validatedData,
-          organizationId: req.user!.organizationId,
-          createdBy: req.user!.id,
+          organizerId,
           eventDate: new Date(validatedData.eventDate),
+          isActive: true
         }
       });
 
@@ -60,9 +67,18 @@ export class CampaignController {
 
   static async listCampaigns(req: AuthenticatedRequest, res: Response) {
     try {
+      const organizerId = req.organizer?.id || req.user?.id;
+
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
       const campaigns = await prisma.campaign.findMany({
         where: {
-          organizationId: req.user!.organizationId
+          organizerId
         },
         include: {
           _count: {
@@ -88,15 +104,23 @@ export class CampaignController {
   static async getCampaign(req: AuthenticatedRequest, res: Response) {
     try {
       const { campaignId } = req.params;
+      const organizerId = req.organizer?.id || req.user?.id;
+
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
 
       const campaign = await prisma.campaign.findFirst({
         where: {
           id: campaignId,
-          organizationId: req.user!.organizationId
+          organizerId
         },
         include: {
           claims: {
-            orderBy: { createdAt: 'desc' },
+            orderBy: { claimedAt: 'desc' },
             take: 50
           },
           _count: {
@@ -128,13 +152,21 @@ export class CampaignController {
   static async updateCampaign(req: AuthenticatedRequest, res: Response) {
     try {
       const { campaignId } = req.params;
+      const organizerId = req.organizer?.id || req.user?.id;
       const updateData = req.body;
 
-      // Verify campaign belongs to organization
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
+      // Verify campaign belongs to organizer
       const existingCampaign = await prisma.campaign.findFirst({
         where: {
           id: campaignId,
-          organizationId: req.user!.organizationId
+          organizerId
         }
       });
 
@@ -170,12 +202,20 @@ export class CampaignController {
   static async deleteCampaign(req: AuthenticatedRequest, res: Response) {
     try {
       const { campaignId } = req.params;
+      const organizerId = req.organizer?.id || req.user?.id;
 
-      // Verify campaign belongs to organization
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
+      // Verify campaign belongs to organizer
       const existingCampaign = await prisma.campaign.findFirst({
         where: {
           id: campaignId,
-          organizationId: req.user!.organizationId
+          organizerId
         }
       });
 
@@ -206,11 +246,18 @@ export class CampaignController {
   static async getCampaignAnalytics(req: AuthenticatedRequest, res: Response) {
     try {
       const { campaignId } = req.params;
-      const organizationId = req.user!.organizationId;
+      const organizerId = req.organizer?.id || req.user?.id;
 
-      // Verify campaign belongs to organization
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
+      // Verify campaign belongs to organizer
       const campaign = await prisma.campaign.findFirst({
-        where: { id: campaignId, organizationId }
+        where: { id: campaignId, organizerId }
       });
 
       if (!campaign) {
@@ -224,12 +271,12 @@ export class CampaignController {
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
       
       const [totalClaims, uniqueUsers, recentClaims] = await Promise.all([
-        prisma.poapClaim.count({ where: { campaignId } }),
-        prisma.poapClaim.groupBy({
+        prisma.claim.count({ where: { campaignId } }),
+        prisma.claim.groupBy({
           by: ['userPublicKey'],
           where: { campaignId }
         }).then(groups => groups.length),
-        prisma.poapClaim.findMany({
+        prisma.claim.findMany({
           where: {
             campaignId,
             claimedAt: { gte: thirtyDaysAgo }
@@ -272,11 +319,18 @@ export class CampaignController {
   static async getCampaignClaims(req: AuthenticatedRequest, res: Response) {
     try {
       const { campaignId } = req.params;
-      const organizationId = req.user!.organizationId;
+      const organizerId = req.organizer?.id || req.user?.id;
 
-      // Verify campaign belongs to organization
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required'
+        });
+      }
+
+      // Verify campaign belongs to organizer
       const campaign = await prisma.campaign.findFirst({
-        where: { id: campaignId, organizationId }
+        where: { id: campaignId, organizerId }
       });
 
       if (!campaign) {
@@ -286,7 +340,7 @@ export class CampaignController {
         });
       }
 
-      const claims = await prisma.poapClaim.findMany({
+      const claims = await prisma.claim.findMany({
         where: { campaignId },
         orderBy: { claimedAt: 'desc' },
         take: 100 // Limit to last 100 claims
@@ -341,7 +395,7 @@ export class CampaignController {
       const campaign = await prisma.campaign.findUnique({
         where: { id: campaignId },
         include: {
-          organization: true,
+          organizer: true,
           _count: { select: { claims: true } }
         }
       });
@@ -377,7 +431,7 @@ export class CampaignController {
       }
 
       // Check if user already claimed
-      const existingClaim = await prisma.poapClaim.findFirst({
+      const existingClaim = await prisma.claim.findFirst({
         where: {
           campaignId,
           userPublicKey
@@ -395,12 +449,12 @@ export class CampaignController {
       // const mintResult = await this.nftMintService.mintPOAP(...)
 
       // Record the claim
-      const claim = await prisma.poapClaim.create({
+      const claim = await prisma.claim.create({
         data: {
           campaignId,
           userPublicKey,
           // mintAddress: mintResult.mintAddress,
-          // transactionSignature: mintResult.transactionSignature,
+          // transactionHash: mintResult.transactionSignature,
           claimedAt: new Date()
         }
       });

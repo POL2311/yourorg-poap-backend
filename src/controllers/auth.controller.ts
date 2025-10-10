@@ -11,7 +11,7 @@ const prisma = new PrismaClient();
 const registerSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(100),
-  company: z.string().min(1).max(100),
+  company: z.string().min(1).max(100).optional(),
   password: z.string().min(6)
 });
 
@@ -32,75 +32,60 @@ export class AuthController {
     try {
       const validatedData = registerSchema.parse(req.body);
 
-      // Check if user already exists
-      const existingUser = await prisma.user.findUnique({
+      // Check if organizer already exists
+      const existingOrganizer = await prisma.organizer.findUnique({
         where: { email: validatedData.email },
       });
 
-      if (existingUser) {
+      if (existingOrganizer) {
         return res.status(400).json({
           success: false,
-          error: 'User with this email already exists',
+          error: 'Organizer with this email already exists',
         });
       }
 
       // Hash password
       const passwordHash = await bcrypt.hash(validatedData.password, 12);
 
-      // Create organization and user in transaction
-      const result = await prisma.$transaction(async (tx) => {
-        // Create organization
-        const organization = await tx.organization.create({
-          data: {
-            name: validatedData.company,
-            isActive: true
-          }
-        });
-
-        // Create user
-        const user = await tx.user.create({
-          data: {
-            email: validatedData.email,
-            name: validatedData.name,
-            passwordHash,
-            organizationId: organization.id,
-            role: 'admin',
-            isActive: true
-          },
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            role: true,
-            organizationId: true,
-            createdAt: true,
-          },
-        });
-
-        return { user, organization };
+      // Create organizer
+      const organizer = await prisma.organizer.create({
+        data: {
+          email: validatedData.email,
+          name: validatedData.name,
+          company: validatedData.company,
+          passwordHash,
+          isActive: true,
+          tier: 'free'
+        },
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          company: true,
+          tier: true,
+          createdAt: true,
+        },
       });
 
       // Generate JWT token
       const token = jwt.sign(
         {
-          userId: result.user.id,
-          email: result.user.email,
-          organizationId: result.user.organizationId,
-          role: result.user.role
+          organizerId: organizer.id,
+          email: organizer.email,
+          tier: organizer.tier
         },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '7d' }
       );
 
-      console.log(`✅ New user registered: ${result.user.email}`);
+      console.log(`✅ New organizer registered: ${organizer.email}`);
 
       return res.status(201).json({
         success: true,
         data: {
-          user: result.user,
-          organization: result.organization,
+          organizer,
           token,
-          message: 'User registered successfully',
+          message: 'Organizer registered successfully',
         },
       });
     } catch (error) {
@@ -122,19 +107,18 @@ export class AuthController {
   }
 
   /**
-   * Login user
+   * Login organizer
    */
   static async login(req: Request, res: Response) {
     try {
       const validatedData = loginSchema.parse(req.body);
 
-      // Find user
-      const user = await prisma.user.findUnique({
+      // Find organizer
+      const organizer = await prisma.organizer.findUnique({
         where: { email: validatedData.email },
-        include: { organization: true }
       });
 
-      if (!user || !user.isActive || !user.organization.isActive) {
+      if (!organizer || !organizer.isActive) {
         return res.status(401).json({
           success: false,
           error: 'Invalid credentials',
@@ -144,7 +128,7 @@ export class AuthController {
       // Verify password
       const isValidPassword = await bcrypt.compare(
         validatedData.password,
-        user.passwordHash
+        organizer.passwordHash
       );
 
       if (!isValidPassword) {
@@ -157,30 +141,25 @@ export class AuthController {
       // Generate JWT token
       const token = jwt.sign(
         {
-          userId: user.id,
-          email: user.email,
-          organizationId: user.organizationId,
-          role: user.role
+          organizerId: organizer.id,
+          email: organizer.email,
+          tier: organizer.tier
         },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '7d' }
       );
 
-      console.log(`✅ User logged in: ${user.email}`);
+      console.log(`✅ Organizer logged in: ${organizer.email}`);
 
       return res.json({
         success: true,
         data: {
-          user: {
-            id: user.id,
-            email: user.email,
-            name: user.name,
-            role: user.role,
-            organizationId: user.organizationId,
-          },
-          organization: {
-            id: user.organization.id,
-            name: user.organization.name
+          organizer: {
+            id: organizer.id,
+            email: organizer.email,
+            name: organizer.name,
+            company: organizer.company,
+            tier: organizer.tier,
           },
           token,
           message: 'Login successful',
@@ -205,43 +184,51 @@ export class AuthController {
   }
 
   /**
-   * Get user profile
+   * Get organizer profile
    */
   static async getProfile(req: any, res: Response) {
     try {
-      const userId = req.user!.id;
+      const organizerId = req.user?.id || req.organizer?.id;
 
-      const user = await prisma.user.findUnique({
-        where: { id: userId },
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required',
+        });
+      }
+
+      const organizer = await prisma.organizer.findUnique({
+        where: { id: organizerId },
         include: {
-          organization: true,
           _count: {
             select: {
               campaigns: true,
+              apiKeys: true
             },
           },
         },
       });
 
-      if (!user) {
+      if (!organizer) {
         return res.status(404).json({
           success: false,
-          error: 'User not found',
+          error: 'Organizer not found',
         });
       }
 
       return res.json({
         success: true,
         data: {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-          organization: user.organization,
+          id: organizer.id,
+          email: organizer.email,
+          name: organizer.name,
+          company: organizer.company,
+          tier: organizer.tier,
           stats: {
-            totalCampaigns: user._count.campaigns
+            totalCampaigns: organizer._count.campaigns,
+            totalApiKeys: organizer._count.apiKeys
           },
-          createdAt: user.createdAt
+          createdAt: organizer.createdAt
         },
       });
     } catch (error) {
@@ -259,12 +246,19 @@ export class AuthController {
   static async createApiKey(req: any, res: Response) {
     try {
       const validatedData = createApiKeySchema.parse(req.body);
-      const organizationId = req.user!.organizationId;
+      const organizerId = req.user?.id || req.organizer?.id;
+
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required',
+        });
+      }
 
       // Check API key limit (basic limit for now)
       const existingKeys = await prisma.apiKey.count({
         where: {
-          organizationId,
+          organizerId,
           isActive: true,
         },
       });
@@ -283,7 +277,7 @@ export class AuthController {
         data: {
           key,
           name: validatedData.name,
-          organizationId,
+          organizerId,
           isActive: true
         },
         select: {
@@ -294,7 +288,7 @@ export class AuthController {
         },
       });
 
-      console.log(`🔑 API key created for organization ${organizationId}: ${validatedData.name}`);
+      console.log(`🔑 API key created for organizer ${organizerId}: ${validatedData.name}`);
 
       return res.status(201).json({
         success: true,
@@ -326,10 +320,17 @@ export class AuthController {
    */
   static async listApiKeys(req: any, res: Response) {
     try {
-      const organizationId = req.user!.organizationId;
+      const organizerId = req.user?.id || req.organizer?.id;
+
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required',
+        });
+      }
 
       const apiKeys = await prisma.apiKey.findMany({
-        where: { organizationId },
+        where: { organizerId },
         select: {
           id: true,
           name: true,
@@ -360,12 +361,19 @@ export class AuthController {
   static async deactivateApiKey(req: any, res: Response) {
     try {
       const { keyId } = req.params;
-      const organizationId = req.user!.organizationId;
+      const organizerId = req.user?.id || req.organizer?.id;
+
+      if (!organizerId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required',
+        });
+      }
 
       const apiKey = await prisma.apiKey.findFirst({
         where: {
           id: keyId,
-          organizationId,
+          organizerId,
         },
       });
 
