@@ -124,7 +124,7 @@ app.get('/api/nft/user/:userPublicKey', legacyNFTController.getUserNFTs);
 app.get('/api/permits', (req, res) => {
   res.json({
     ok: true,
-    message: 'Multi-Tenant POAP Infrastructure API v2.0',
+    message: 'Multi-Tenant Gasless infrastructure API v2.0',
     network: 'devnet',
     migration: {
       notice: 'This API has been upgraded to multi-tenant SaaS platform',
@@ -150,7 +150,7 @@ app.post('/api/permits/create', (req, res) => {
 
 app.get('/api/docs', (req, res) => {
   res.json({
-    title: 'Multi-Tenant POAP Infrastructure API',
+    title: 'Multi-Tenant Gasless infrastructure API',
     version: '2.0.0',
     description: 'SaaS platform for gasless POAP minting on Solana with secret code validation',
     baseUrl: `${req.protocol}://${req.get('host')}/api`,
@@ -282,7 +282,7 @@ app.use('*', (req, res) => {
 
 const PORT = Number(process.env.PORT || 3000);
 app.listen(PORT, () => {
-  console.log('🚀 MULTI-TENANT POAP INFRASTRUCTURE STARTED');
+  console.log('🚀 MULTI-TENANT Gasless infrastructure STARTED');
   console.log(`📍 URL: http://localhost:${PORT}`);
   console.log(`📚 API Docs: http://localhost:${PORT}/api/docs`);
   console.log(`🏥 Health Check: http://localhost:${PORT}/health`);
