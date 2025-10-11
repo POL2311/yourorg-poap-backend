@@ -8,7 +8,7 @@ export interface AuthenticatedRequest extends Request {
   user?: {
     id: string;
     email: string;
-    organizationId: string;
+    organizerId: string;
     role: string;
   };
   organizer?: {
@@ -25,31 +25,20 @@ export interface AuthenticatedRequest extends Request {
 }
 
 // JWT Authentication (for dashboard/organizer operations)
-export const authenticate = async (
-  req: AuthenticatedRequest,
-  res: Response,
-  next: NextFunction
-) => {
+export const authenticate = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ success: false, error: 'Access token required' });
-  }
+  if (!token) return res.status(401).json({ success: false, error: 'Access token required' });
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
-    
-    // Verify organizer still exists and is active
-    const organizer = await prisma.organizer.findUnique({
-      where: { id: decoded.organizerId }
-    });
 
+    // Decoded debe traer organizerId (asegúrate al emitir el token)
+    const organizer = await prisma.organizer.findUnique({ where: { id: decoded.organizerId } });
     if (!organizer || !organizer.isActive) {
       return res.status(401).json({ success: false, error: 'Invalid or inactive organizer' });
     }
 
-    // Set both user and organizer for backward compatibility
     req.organizer = {
       id: organizer.id,
       email: organizer.email,
@@ -57,19 +46,19 @@ export const authenticate = async (
       name: organizer.name
     };
 
-    // Also set user for compatibility with other parts of the code
     req.user = {
       id: organizer.id,
       email: organizer.email,
-      organizationId: organizer.id, // Use organizer ID as organization ID
-      role: 'admin'
+      role: 'admin',
+      organizerId: organizer.id,          // ✅ canónico
     };
 
     next();
-  } catch (error) {
+  } catch {
     return res.status(403).json({ success: false, error: 'Invalid token' });
   }
 };
+
 
 // API Key Authentication (for POAP claiming operations)
 export const authenticateApiKey = async (
