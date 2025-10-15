@@ -12,6 +12,7 @@ import { CampaignController } from './controllers/campaign.controller';
 import { MultiTenantNFTController } from './controllers/multi-tenant-nft.controller';
 import { NFTClaimController } from './controllers/nft-claim.controller'; // Legacy support
 import { SystemController } from './controllers/system.controller';
+import { AnalyticsController } from './controllers/analytics.controller'; // ✅ nuevo import
 
 // Middleware
 import { authenticate, authenticateApiKey } from './middleware/auth.middleware';
@@ -28,7 +29,7 @@ app.use(express.json({ limit: '10mb' }));
 // Rate limiting
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  max: 100,
   message: {
     success: false,
     error: 'Too many requests from this IP, please try again later.',
@@ -38,8 +39,8 @@ app.use('/api/', limiter);
 
 // Stricter rate limiting for auth endpoints
 const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 10, // limit each IP to 10 auth requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 10,
   message: {
     success: false,
     error: 'Too many authentication attempts, please try again later.',
@@ -50,10 +51,12 @@ const authLimiter = rateLimit({
 
 let multiTenantNFTController: MultiTenantNFTController;
 let legacyNFTController: NFTClaimController;
+let analyticsController: AnalyticsController; // ✅ nueva instancia
 
 try {
   multiTenantNFTController = new MultiTenantNFTController();
   legacyNFTController = new NFTClaimController(); // For backward compatibility
+  analyticsController = new AnalyticsController(); // ✅ inicialización
   console.log('✅ Controllers initialized');
 } catch (error) {
   console.error('❌ Error initializing controllers:', error);
@@ -62,16 +65,9 @@ try {
 
 // ===== SYSTEM MONITORING ROUTES =====
 
-// Comprehensive health check
 app.get('/health', SystemController.healthCheck);
-
-// System statistics
 app.get('/api/system/stats', SystemController.getSystemStats);
-
-// Database migration status
 app.get('/api/system/migration-status', SystemController.getMigrationStatus);
-
-// Test database operations
 app.get('/api/system/test-db', SystemController.testDatabaseOperations);
 
 // ===== AUTHENTICATION ROUTES =====
@@ -80,7 +76,6 @@ app.post('/api/auth/register', authLimiter, AuthController.register);
 app.post('/api/auth/login', authLimiter, AuthController.login);
 app.get('/api/auth/profile', authenticate, AuthController.getProfile);
 
-// API Key management
 app.post('/api/auth/api-keys', authenticate, AuthController.createApiKey);
 app.get('/api/auth/api-keys', authenticate, AuthController.listApiKeys);
 app.delete('/api/auth/api-keys/:keyId', authenticate, AuthController.deactivateApiKey);
@@ -93,34 +88,38 @@ app.get('/api/campaigns/:campaignId', authenticate, CampaignController.getCampai
 app.put('/api/campaigns/:campaignId', authenticate, CampaignController.updateCampaign);
 app.delete('/api/campaigns/:campaignId', authenticate, CampaignController.deleteCampaign);
 
-// Campaign analytics
 app.get('/api/campaigns/:campaignId/analytics', authenticate, CampaignController.getCampaignAnalytics);
 app.get('/api/campaigns/:campaignId/claims', authenticate, CampaignController.getCampaignClaims);
 
+// ===== ANALYTICS ROUTES =====
+app.get('/api/analytics/dashboard', authenticate, (req, res) =>
+  analyticsController.getDashboardStats(req, res)
+);
+
+app.get('/api/analytics/claims/daily', authenticate, (req, res) =>
+  analyticsController.getDailyClaims(req, res)
+);
+
+app.get('/api/analytics/trend/monthly', authenticate, (req, res) =>
+  analyticsController.getMonthlyTrend(req, res)
+);
+
 // ===== PUBLIC POAP CLAIMING ROUTES =====
 
-// Main POAP claiming endpoint with secret code validation
 app.post('/api/poap/claim', multiTenantNFTController.claimPOAP);
-
-// Public campaign info (no auth required)
 app.get('/api/campaigns/:campaignId/public', multiTenantNFTController.getPublicCampaign);
-
-// User's POAPs across all campaigns (no auth required)
 app.get('/api/poap/user/:userPublicKey', multiTenantNFTController.getUserPOAPs);
 
 // ===== SYSTEM ROUTES =====
 
-// Relayer statistics
 app.get('/api/relayer/stats', multiTenantNFTController.getRelayerStats);
 
 // ===== LEGACY COMPATIBILITY ROUTES =====
 
-// Legacy demo endpoint (for backward compatibility)
 app.post('/api/nft/claim-magical', legacyNFTController.claimNFTMagical);
 app.post('/api/nft/claim-with-signature', legacyNFTController.claimNFTWithSignature);
 app.get('/api/nft/user/:userPublicKey', legacyNFTController.getUserNFTs);
 
-// Legacy permits endpoint
 app.get('/api/permits', (req, res) => {
   res.json({
     ok: true,
@@ -206,6 +205,11 @@ app.get('/api/docs', (req, res) => {
         'DELETE /campaigns/:id': 'Delete campaign',
         'GET /campaigns/:id/analytics': 'Campaign analytics',
         'GET /campaigns/:id/claims': 'Campaign claims',
+      },
+      analytics: { // ✅ nuevo bloque
+        'GET /analytics/dashboard': 'Dashboard analytics overview',
+        'GET /analytics/claims/daily': 'Daily claims data for charts',
+        'GET /analytics/trend/monthly': 'Monthly campaigns and claims trend',
       },
       poap: {
         'POST /poap/claim': 'Claim POAP (with secret code validation)',

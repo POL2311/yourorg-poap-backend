@@ -7,8 +7,7 @@ const prisma = new PrismaClient();
 export class AnalyticsController {
   async getDashboardStats(req: AuthenticatedRequest, res: Response) {
     try {
-      // Si en tu token viene como organizationId, puedes mapearlo a organizerId aquí:
-      const organizerId = req.user!.organizerId; // o req.user!.organizerId si ya lo tienes así
+      const organizerId = req.user!.organizerId;
 
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -21,38 +20,18 @@ export class AnalyticsController {
         topCampaigns,
         recentActivity
       ] = await Promise.all([
-        // Total campaigns
-        prisma.campaign.count({
-          where: { organizerId }
-        }),
-
-        // Active campaigns
-        prisma.campaign.count({
-          where: { organizerId, isActive: true }
-        }),
-
-        // Total claims del organizador (vía relación)
+        prisma.campaign.count({ where: { organizerId } }),
+        prisma.campaign.count({ where: { organizerId, isActive: true } }),
+        prisma.claim.count({ where: { campaign: { is: { organizerId } } } }),
         prisma.claim.count({
-          where: { campaign: { is: { organizerId } } }
+          where: { campaign: { is: { organizerId } }, claimedAt: { gte: thirtyDaysAgo } }
         }),
-
-        // Claims en últimos 30 días
-        prisma.claim.count({
-          where: {
-            campaign: { is: { organizerId } },
-            claimedAt: { gte: thirtyDaysAgo }
-          }
-        }),
-
-        // Top campañas por número de claims
         prisma.campaign.findMany({
           where: { organizerId },
           include: { _count: { select: { claims: true } } },
           orderBy: { claims: { _count: 'desc' } },
           take: 5
         }),
-
-        // Actividad reciente (últimos 10 claims)
         prisma.claim.findMany({
           where: { campaign: { is: { organizerId } } },
           include: { campaign: { select: { name: true } } },
@@ -93,9 +72,8 @@ export class AnalyticsController {
   async getCampaignAnalytics(req: AuthenticatedRequest, res: Response) {
     try {
       const { campaignId } = req.params;
-      const organizerId = req.user!.organizerId; // o organizerId directo
+      const organizerId = req.user!.organizerId;
 
-      // Verifica que la campaña pertenezca al organizador
       const campaign = await prisma.campaign.findFirst({
         where: { id: campaignId, organizerId }
       });
@@ -104,10 +82,8 @@ export class AnalyticsController {
         return res.status(404).json({ success: false, error: 'Campaign not found' });
       }
 
-      // Últimos 30 días
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-      // Serie por fecha exacta (luego la agrupamos a día)
       const claimsOverTime = await prisma.claim.groupBy({
         by: ['claimedAt'],
         where: { campaignId, claimedAt: { gte: thirtyDaysAgo } },
@@ -151,7 +127,7 @@ export class AnalyticsController {
   private groupClaimsByDay(claims: Array<{ claimedAt: Date; _count: { _all: number } }>) {
     const grouped = new Map<string, number>();
     claims.forEach(c => {
-      const date = new Date(c.claimedAt).toISOString().split('T')[0]; // YYYY-MM-DD
+      const date = new Date(c.claimedAt).toISOString().split('T')[0];
       grouped.set(date, (grouped.get(date) || 0) + c._count._all);
     });
     return Array.from(grouped.entries()).map(([date, count]) => ({ date, claims: count }));
@@ -173,6 +149,97 @@ export class AnalyticsController {
     } catch (error) {
       console.error('Health check failed:', error);
       return res.status(500).json({ success: false, error: 'System health check failed' });
+    }
+  }
+
+  // ✅ NUEVOS MÉTODOS PARA GRÁFICAS DEL DASHBOARD
+  async getDailyClaims(req: AuthenticatedRequest, res: Response) {
+    try {
+      const organizerId = req.user!.organizerId;
+      const tz = (req.query.tz as string) || 'America/Mexico_City';
+      const end = new Date();
+      const start = new Date(end.getTime() - 6 * 24 * 60 * 60 * 1000);
+
+      const rows = await prisma.$queryRaw<{ d: Date; claims: bigint }[]>`
+        SELECT
+          date_trunc('day', (c."claimedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS d,
+          COUNT(*)::bigint AS claims
+        FROM "Claim" c
+        JOIN "Campaign" ca ON ca.id = c."campaignId"
+        WHERE ca."organizerId" = ${organizerId}
+          AND c."claimedAt" >= ${start}
+          AND c."claimedAt" <  ${end}
+        GROUP BY 1
+        ORDER BY 1
+      `;
+
+      const map = new Map<string, number>();
+      rows.forEach(r => map.set(new Date(r.d).toISOString().slice(0, 10), Number(r.claims)));
+
+      const out: { date: string; claims: number }[] = [];
+      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+        const k = d.toISOString().slice(0, 10);
+        out.push({ date: k, claims: map.get(k) ?? 0 });
+      }
+
+      return res.json(out);
+    } catch (error) {
+      console.error('Error fetching daily claims:', error);
+      return res.status(500).json({ success: false, error: 'Failed to fetch daily claims' });
+    }
+  }
+
+  async getMonthlyTrend(req: AuthenticatedRequest, res: Response) {
+    try {
+      const organizerId = req.user!.organizerId;
+      const tz = (req.query.tz as string) || 'America/Mexico_City';
+      const months = Number(req.query.months || 6);
+
+      const end = new Date();
+      const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1);
+
+      const claims = await prisma.$queryRaw<{ m: Date; claims: bigint }[]>`
+        SELECT
+          date_trunc('month', (c."claimedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS m,
+          COUNT(*)::bigint AS claims
+        FROM "Claim" c
+        JOIN "Campaign" ca ON ca.id = c."campaignId"
+        WHERE ca."organizerId" = ${organizerId}
+          AND c."claimedAt" >= ${start}
+          AND c."claimedAt" <= ${end}
+        GROUP BY 1
+        ORDER BY 1
+      `;
+
+      const campaigns = await prisma.$queryRaw<{ m: Date; campaigns: bigint }[]>`
+        SELECT
+          date_trunc('month', (ca."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS m,
+          COUNT(*)::bigint AS campaigns
+        FROM "Campaign" ca
+        WHERE ca."organizerId" = ${organizerId}
+          AND ca."createdAt" >= ${start}
+          AND ca."createdAt" <= ${end}
+        GROUP BY 1
+        ORDER BY 1
+      `;
+
+      const cMap = new Map<string, number>();
+      claims.forEach(r => cMap.set(new Date(r.m).toISOString().slice(0, 7), Number(r.claims)));
+      const pMap = new Map<string, number>();
+      campaigns.forEach(r => pMap.set(new Date(r.m).toISOString().slice(0, 7), Number(r.campaigns)));
+
+      const out: { month: string; claims: number; campaigns: number }[] = [];
+      for (let i = 0; i < months; i++) {
+        const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+        const key = d.toISOString().slice(0, 7);
+        const label = d.toLocaleString('en-US', { month: 'short' });
+        out.push({ month: label, claims: cMap.get(key) ?? 0, campaigns: pMap.get(key) ?? 0 });
+      }
+
+      return res.json(out);
+    } catch (error) {
+      console.error('Error fetching monthly trend:', error);
+      return res.status(500).json({ success: false, error: 'Failed to fetch monthly trend' });
     }
   }
 }
