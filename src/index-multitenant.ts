@@ -104,6 +104,11 @@ app.get('/api/analytics/trend/monthly', authenticate, (req, res) =>
   analyticsController.getMonthlyTrend(req, res)
 );
 
+// 🔄 Recent activity for dashboard
+app.get('/api/analytics/recent-activity', authenticate, (req, res) =>
+  analyticsController.getRecentActivity(req, res)
+);
+
 // ===== PUBLIC POAP CLAIMING ROUTES =====
 
 app.post('/api/poap/claim', multiTenantNFTController.claimPOAP);

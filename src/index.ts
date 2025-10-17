@@ -5,7 +5,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import { NFTClaimController } from './controllers/nft-claim.controller';
 import { AnalyticsController } from './controllers/analytics.controller';
-import { authenticate } from './middleware/auth.middleware';
+import { AuthController } from './controllers/auth.controller';
+import { authenticate, AuthenticatedRequest } from './middleware/auth.middleware';
 
 const app = express();
 app.use(cors());
@@ -26,6 +27,22 @@ try {
 }
 
 // ===== MAIN ROUTES =====
+
+// ===== AUTH ROUTES =====
+
+// 🔐 Register new organizer
+app.post('/api/auth/register', AuthController.register);
+
+// 🔑 Login organizer
+app.post('/api/auth/login', AuthController.login);
+
+// 👤 Get organizer profile
+app.get('/api/auth/profile', authenticate, AuthController.getProfile);
+
+// 🔑 API Key management
+app.post('/api/auth/api-keys', authenticate, AuthController.createApiKey);
+app.get('/api/auth/api-keys', authenticate, AuthController.listApiKeys);
+app.delete('/api/auth/api-keys/:keyId', authenticate, AuthController.deactivateApiKey);
 
 // Health check
 app.get('/health', (req, res) => {
@@ -62,22 +79,27 @@ app.get('/api/relayer/stats', nftClaimController.getRelayerStats);
 // ===== ANALYTICS ROUTES =====
 
 // 📊 Dashboard analytics overview
-app.get('/api/analytics/dashboard', authenticate, (req, res) =>
+app.get('/api/analytics/dashboard', authenticate, (req: AuthenticatedRequest, res) =>
   analyticsController.getDashboardStats(req, res)
 );
 
 // 📈 Daily claims data for charts
-app.get('/api/analytics/claims/daily', authenticate, (req, res) =>
+app.get('/api/analytics/claims/daily', authenticate, (req: AuthenticatedRequest, res) =>
   analyticsController.getDailyClaims(req, res)
 );
 
 // 📊 Monthly campaigns and claims trend
-app.get('/api/analytics/trend/monthly', authenticate, (req, res) =>
+app.get('/api/analytics/trend/monthly', authenticate, (req: AuthenticatedRequest, res) =>
   analyticsController.getMonthlyTrend(req, res)
 );
 
+// 🔄 Recent activity for dashboard
+app.get('/api/analytics/recent-activity', authenticate, (req: AuthenticatedRequest, res) =>
+  analyticsController.getRecentActivity(req, res)
+);
+
 // 🔧 Test analytics endpoint (for debugging)
-app.get('/api/analytics/test', authenticate, (req, res) => {
+app.get('/api/analytics/test', authenticate, (req: AuthenticatedRequest, res) => {
   res.json({
     success: true,
     message: 'Analytics authentication working!',
