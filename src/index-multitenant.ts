@@ -15,7 +15,7 @@ import { SystemController } from './controllers/system.controller';
 import { AnalyticsController } from './controllers/analytics.controller';
 
 // Middleware
-import { authenticate, authenticateApiKey } from './middleware/auth.middleware';
+import { authenticate, authenticateApiKey, authenticateUser } from './middleware/auth.middleware';
 
 // User routes
 import userRoutes from './routes/user.routes';
@@ -104,6 +104,10 @@ app.get('/api/analytics/trend/monthly', authenticate, (req, res) =>
 app.post('/api/poap/claim', multiTenantNFTController.claimPOAP);
 app.get('/api/campaigns/:campaignId/public', multiTenantNFTController.getPublicCampaign);
 app.get('/api/poap/user/:userPublicKey', multiTenantNFTController.getUserPOAPs);
+app.get('/api/poap/user/:userPublicKey/stats', multiTenantNFTController.getUserClaimStats);
+
+// ===== AUTHENTICATED USER ROUTES =====
+app.get('/api/user/claim-stats', authenticateUser, multiTenantNFTController.getUserClaimStatsAuth);
 
 // ===== RELAYER AND SYSTEM ROUTES =====
 app.get('/api/relayer/stats', multiTenantNFTController.getRelayerStats);

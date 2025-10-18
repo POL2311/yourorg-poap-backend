@@ -325,6 +325,277 @@ export class MultiTenantNFTController {
   };
 
   /**
+   * 🏆 Get authenticated user's claim statistics and badges
+   */
+  getUserClaimStatsAuth = async (req: any, res: Response) => {
+    try {
+      const userId = req.user?.id;
+
+      if (!userId) {
+        return res.status(401).json({
+          success: false,
+          error: 'Authentication required',
+        });
+      }
+
+      console.log('📊 Getting claim stats for authenticated user:', userId);
+
+      // Get total claims count for the authenticated user
+      const totalClaims = await prisma.claim.count({
+        where: { userId },
+      });
+
+      console.log('📈 Total claims found:', totalClaims);
+
+      // Get claims by month for recent activity
+      const monthlyClaims = await prisma.$queryRaw<{ month: string; count: bigint }[]>`
+        SELECT 
+          TO_CHAR("claimedAt", 'YYYY-MM') as month,
+          COUNT(*)::bigint as count
+        FROM "claims" 
+        WHERE "userId" = ${userId}
+        GROUP BY TO_CHAR("claimedAt", 'YYYY-MM')
+        ORDER BY month DESC
+        LIMIT 12
+      `;
+
+      // Calculate badges based on claim count
+      const badges = this.calculateBadges(totalClaims);
+
+      return res.json({
+        success: true,
+        data: {
+          userId,
+          totalClaims,
+          monthlyStats: monthlyClaims.map(item => ({
+            month: item.month,
+            count: Number(item.count)
+          })),
+          badges,
+          level: this.calculateLevel(totalClaims),
+        },
+      });
+    } catch (error) {
+      console.error('❌ Error getting user claim stats:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to get user claim stats',
+      });
+    }
+  };
+
+  /**
+   * 🏆 Get user's claim statistics and badges (public endpoint)
+   */
+  getUserClaimStats = async (req: Request, res: Response) => {
+    try {
+      const { userPublicKey } = req.params;
+
+      if (!userPublicKey) {
+        return res.status(400).json({
+          success: false,
+          error: 'userPublicKey is required',
+        });
+      }
+
+      console.log('📊 Getting claim stats for:', userPublicKey);
+
+      // Check if userPublicKey is an email (for testing) or a valid Solana public key
+      let whereClause: any = {};
+      
+      if (userPublicKey.includes('@')) {
+        // If it's an email, find the user by email and get claims by userId
+        const user = await prisma.user.findUnique({
+          where: { email: userPublicKey }
+        });
+        
+        if (!user) {
+          return res.json({
+            success: true,
+            data: {
+              userPublicKey,
+              totalClaims: 0,
+              monthlyStats: [],
+              badges: this.calculateBadges(0),
+              level: this.calculateLevel(0),
+            },
+          });
+        }
+        
+        whereClause = { userId: user.id };
+      } else {
+        // If it's a Solana public key, validate it and search by userPublicKey
+        try {
+          new PublicKey(userPublicKey);
+          whereClause = { userPublicKey };
+        } catch {
+          return res.status(400).json({
+            success: false,
+            error: 'Invalid userPublicKey format - must be a valid Solana public key or email',
+          });
+        }
+      }
+
+      // Get total claims count
+      const totalClaims = await prisma.claim.count({
+        where: whereClause,
+      });
+
+      console.log('📈 Total claims found:', totalClaims);
+
+      // Get claims by month for recent activity
+      const monthlyClaims = await prisma.$queryRaw<{ month: string; count: bigint }[]>`
+        SELECT 
+          TO_CHAR("claimedAt", 'YYYY-MM') as month,
+          COUNT(*)::bigint as count
+        FROM "claims" 
+        WHERE ${whereClause.userId ? `"userId" = ${whereClause.userId}` : `"userPublicKey" = ${whereClause.userPublicKey}`}
+        GROUP BY TO_CHAR("claimedAt", 'YYYY-MM')
+        ORDER BY month DESC
+        LIMIT 12
+      `;
+
+      // Calculate badges based on claim count
+      const badges = this.calculateBadges(totalClaims);
+
+      return res.json({
+        success: true,
+        data: {
+          userPublicKey,
+          totalClaims,
+          monthlyStats: monthlyClaims.map(item => ({
+            month: item.month,
+            count: Number(item.count)
+          })),
+          badges,
+          level: this.calculateLevel(totalClaims),
+        },
+      });
+    } catch (error) {
+      console.error('❌ Error getting user claim stats:', error);
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to get user claim stats',
+      });
+    }
+  };
+
+  /**
+   * 🏅 Calculate badges based on claim count
+   */
+  private calculateBadges(totalClaims: number) {
+    const badges = [];
+
+    if (totalClaims >= 1) {
+      badges.push({
+        id: 'first_claim',
+        name: 'Primer Claim',
+        description: '¡Has reclamado tu primer token!',
+        icon: '🎯',
+        rarity: 'common',
+        unlocked: true,
+      });
+    }
+
+    if (totalClaims >= 5) {
+      badges.push({
+        id: 'collector',
+        name: 'Coleccionista',
+        description: 'Has reclamado 5 tokens',
+        icon: '🏆',
+        rarity: 'uncommon',
+        unlocked: true,
+      });
+    }
+
+    if (totalClaims >= 10) {
+      badges.push({
+        id: 'enthusiast',
+        name: 'Entusiasta',
+        description: 'Has reclamado 10 tokens',
+        icon: '⭐',
+        rarity: 'rare',
+        unlocked: true,
+      });
+    }
+
+    if (totalClaims >= 25) {
+      badges.push({
+        id: 'expert',
+        name: 'Experto',
+        description: 'Has reclamado 25 tokens',
+        icon: '💎',
+        rarity: 'epic',
+        unlocked: true,
+      });
+    }
+
+    if (totalClaims >= 50) {
+      badges.push({
+        id: 'master',
+        name: 'Maestro',
+        description: 'Has reclamado 50 tokens',
+        icon: '👑',
+        rarity: 'legendary',
+        unlocked: true,
+      });
+    }
+
+    if (totalClaims >= 100) {
+      badges.push({
+        id: 'legend',
+        name: 'Leyenda',
+        description: 'Has reclamado 100 tokens',
+        icon: '🌟',
+        rarity: 'mythic',
+        unlocked: true,
+      });
+    }
+
+    // Add locked badges for motivation
+    if (totalClaims < 5) {
+      badges.push({
+        id: 'collector_locked',
+        name: 'Coleccionista',
+        description: 'Reclama 5 tokens para desbloquear',
+        icon: '🔒',
+        rarity: 'uncommon',
+        unlocked: false,
+        progress: totalClaims,
+        target: 5,
+      });
+    }
+
+    if (totalClaims < 10) {
+      badges.push({
+        id: 'enthusiast_locked',
+        name: 'Entusiasta',
+        description: 'Reclama 10 tokens para desbloquear',
+        icon: '🔒',
+        rarity: 'rare',
+        unlocked: false,
+        progress: totalClaims,
+        target: 10,
+      });
+    }
+
+    return badges;
+  }
+
+  /**
+   * 📈 Calculate user level based on claim count
+   */
+  private calculateLevel(totalClaims: number) {
+    if (totalClaims >= 100) return { level: 10, name: 'Leyenda', color: 'purple' };
+    if (totalClaims >= 50) return { level: 9, name: 'Maestro', color: 'gold' };
+    if (totalClaims >= 25) return { level: 8, name: 'Experto', color: 'blue' };
+    if (totalClaims >= 10) return { level: 7, name: 'Entusiasta', color: 'green' };
+    if (totalClaims >= 5) return { level: 6, name: 'Coleccionista', color: 'orange' };
+    if (totalClaims >= 1) return { level: 5, name: 'Iniciado', color: 'gray' };
+    return { level: 1, name: 'Novato', color: 'gray' };
+  }
+
+  /**
    * 📊 Get public campaign info (no auth required)
    */
   getPublicCampaign = async (req: Request, res: Response) => {

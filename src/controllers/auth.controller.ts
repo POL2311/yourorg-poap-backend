@@ -168,6 +168,8 @@ export class AuthController {
       const token = jwt.sign(
         {
           id: account.id,
+          userId: user ? user.id : undefined,
+          organizerId: organizer ? organizer.id : undefined,
           email: account.email,
           role,
         },
