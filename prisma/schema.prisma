@@ -1,5 +1,5 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
+// This is your Prisma schema file
+// Learn more about it in the docs: https://pris.ly/d/prisma-schema
 
 generator client {
   provider = "prisma-client-js"
@@ -8,86 +8,123 @@ generator client {
 datasource db {
   provider          = "postgresql"
   url               = env("DATABASE_URL")
-  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")  // 👈
+  shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
-model Organizer {
-  id          String   @id @default(cuid())
-  email       String   @unique
-  name        String
-  company     String?
+// ========================================================
+// USERS & ROLES
+// ========================================================
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
   passwordHash String
-  isActive    Boolean  @default(true)
-  tier        String   @default("free") // free, pro, enterprise
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  role         UserRole @default(USER)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // Relations
+  claims     Claim[]
+  activities UserActivity[]
+
+  @@map("users")
+}
+
+enum UserRole {
+  USER // Usuario normal (solo puede ver su perfil)
+  ORGANIZER // Organizador (puede crear campañas)
+  ADMIN // Superadministrador (gestiona todo)
+}
+
+// ========================================================
+// ORGANIZERS & CAMPAIGNS
+// ========================================================
+
+model Organizer {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  company      String?
+  passwordHash String
+  isActive     Boolean  @default(true)
+  tier         String   @default("free") // free, pro, enterprise
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   // Relations
   apiKeys   ApiKey[]
   campaigns Campaign[]
-  
+
   @@map("organizers")
 }
 
 model ApiKey {
-  id          String   @id @default(cuid())
-  key         String   @unique
+  id          String    @id @default(cuid())
+  key         String    @unique
   name        String
   organizerId String
-  isActive    Boolean  @default(true)
+  isActive    Boolean   @default(true)
   lastUsedAt  DateTime?
-  createdAt   DateTime @default(now())
-  
+  createdAt   DateTime  @default(now())
+
   // Relations
-  organizer   Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
-  
+  organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+
   @@map("api_keys")
 }
 
 model Campaign {
-  id              String   @id @default(cuid())
-  name            String
-  description     String?
-  eventDate       DateTime
-  location        String?
-  imageUrl        String?
-  externalUrl     String?
-  secretCode      String?
-  maxClaims       Int?
-  isActive        Boolean  @default(true)
-  organizerId     String
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  eventDate   DateTime
+  location    String?
+  imageUrl    String?
+  externalUrl String?
+  secretCode  String?
+  maxClaims   Int?
+  isActive    Boolean  @default(true)
+  organizerId String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   // Metadata
-  metadata        Json?
-  
+  metadata Json?
+
   // Relations
-  organizer       Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
-  claims          Claim[]
-  
+  organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
+  claims    Claim[]
+
   @@map("campaigns")
 }
 
+// ========================================================
+// CLAIMS & USAGE
+// ========================================================
+
 model Claim {
-  id                String   @id @default(cuid())
-  campaignId        String
-  userPublicKey     String
-  mintAddress       String?
-  tokenAccount      String?
-  transactionHash   String?
-  gasCost           Int?     // in lamports
-  claimedAt         DateTime @default(now())
-  
-  // Additional data
-  userAgent         String?
-  ipAddress         String?
-  metadata          Json?
-  
-  // Relations
-  campaign          Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  
-  // Prevent duplicate claims
+  id              String   @id @default(cuid())
+  campaignId      String
+  userId          String? // Relación opcional a usuarios normales
+  userPublicKey   String
+  mintAddress     String?
+  tokenAccount    String?
+  transactionHash String?
+  gasCost         Int? // en lamports
+  claimedAt       DateTime @default(now())
+
+  // Datos adicionales
+  userAgent String?
+  ipAddress String?
+  metadata  Json?
+
+  // Relaciones
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Evitar reclamos duplicados
   @@unique([campaignId, userPublicKey])
   @@map("claims")
 }
@@ -97,8 +134,59 @@ model Usage {
   organizerId String
   date        DateTime @default(now())
   claims      Int      @default(0)
-  gasCost     Int      @default(0) // in lamports
-  
+  gasCost     Int      @default(0) // en lamports
+
   @@unique([organizerId, date])
   @@map("usage")
+}
+
+// ========================================================
+// NFT MINTS, RELAYER STATS & USER ACTIVITY
+// ========================================================
+
+model NFTMint {
+  id                   String   @id @default(cuid())
+  mintAddress          String   @unique
+  userPublicKey        String
+  transactionSignature String   @unique
+  metadata             Json
+  gasCost              Int
+  relayerPublicKey     String
+  serviceId            String?
+  eventId              String?
+  eventName            String?
+  network              String   @default("devnet")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  @@map("nft_mints")
+}
+
+model RelayerStats {
+  id               String   @id @default(cuid())
+  relayerPublicKey String   @unique
+  totalMints       Int      @default(0)
+  totalGasPaid     BigInt   @default(0)
+  currentBalance   BigInt   @default(0)
+  lastActivity     DateTime @default(now())
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@map("relayer_stats")
+}
+
+model UserActivity {
+  id            String   @id @default(cuid())
+  userPublicKey String
+  action        String // "mint_nft", "claim_poap", etc.
+  details       Json
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  // Relación inversa hacia User
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_activity")
 }

@@ -77,15 +77,6 @@ app.get('/api/analytics/trend/monthly', authenticate, (req, res) =>
 );
 
 // 🔧 Test analytics endpoint (for debugging)
-app.get('/api/analytics/test', authenticate, (req, res) => {
-  res.json({
-    success: true,
-    message: 'Analytics authentication working!',
-    user: req.user,
-    organizer: req.organizer,
-    timestamp: new Date().toISOString()
-  });
-});
 
 // ===== COMPATIBILITY ROUTES =====
 

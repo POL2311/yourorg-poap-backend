@@ -7,12 +7,15 @@ import { z } from 'zod';
 
 const prisma = new PrismaClient();
 
-// Validation schemas
+// ========================
+// VALIDACIONES
+// ========================
 const registerSchema = z.object({
   email: z.string().email(),
   name: z.string().min(1).max(100),
   company: z.string().min(1).max(100).optional(),
-  password: z.string().min(6)
+  password: z.string().min(6),
+  type: z.enum(['user', 'organizer']).default('user') // 👈 indica el tipo de registro
 });
 
 const loginSchema = z.object({
@@ -25,166 +28,194 @@ const createApiKeySchema = z.object({
 });
 
 export class AuthController {
+
   /**
-   * Register new organizer
+   * ========================
+   * REGISTRO DE USUARIO / ORGANIZADOR
+   * ========================
    */
   static async register(req: Request, res: Response) {
     try {
       const validatedData = registerSchema.parse(req.body);
+      const { email, name, company, password, type } = validatedData;
 
-      // Check if organizer already exists
-      const existingOrganizer = await prisma.organizer.findUnique({
-        where: { email: validatedData.email },
-      });
+      // Comprobamos si ya existe en User u Organizer
+      const existingUser = await prisma.user.findUnique({ where: { email } });
+      const existingOrganizer = await prisma.organizer.findUnique({ where: { email } });
 
-      if (existingOrganizer) {
+      if (existingUser || existingOrganizer) {
         return res.status(400).json({
           success: false,
-          error: 'Organizer with this email already exists',
+          error: 'El correo ya está registrado',
         });
       }
 
-      // Hash password
-      const passwordHash = await bcrypt.hash(validatedData.password, 12);
+      // Encriptamos la contraseña
+      const passwordHash = await bcrypt.hash(password, 12);
 
-      // Create organizer
-      const organizer = await prisma.organizer.create({
-        data: {
-          email: validatedData.email,
-          name: validatedData.name,
-          company: validatedData.company,
-          passwordHash,
-          isActive: true,
-          tier: 'free'
-        },
-        select: {
-          id: true,
-          email: true,
-          name: true,
-          company: true,
-          tier: true,
-          createdAt: true,
-        },
-      });
+      let account: any;
+      let role: string;
 
-      // Generate JWT token
+      if (type === 'organizer') {
+        // Crear organizador
+        account = await prisma.organizer.create({
+          data: {
+            email,
+            name,
+            company,
+            passwordHash,
+            isActive: true,
+            tier: 'free',
+          },
+        });
+        role = 'ORGANIZER';
+      } else {
+        // Crear usuario normal
+        account = await prisma.user.create({
+          data: {
+            email,
+            name,
+            passwordHash,
+            role: 'USER',
+            isActive: true,
+          },
+        });
+        role = 'USER';
+      }
+
+      // Generamos el token JWT
       const token = jwt.sign(
         {
-          organizerId: organizer.id,
-          email: organizer.email,
-          tier: organizer.tier
+          id: account.id,
+          email: account.email,
+          role,
         },
         process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '7d' }
       );
 
-      console.log(`✅ New organizer registered: ${organizer.email}`);
+      console.log(`✅ Nuevo ${role.toLowerCase()} registrado: ${account.email}`);
 
       return res.status(201).json({
         success: true,
         data: {
-          organizer,
+          id: account.id,
+          email: account.email,
+          name: account.name,
+          company: account.company || null,
+          role,
           token,
-          message: 'Organizer registered successfully',
+          redirect:
+            role === 'USER'
+              ? '/user'
+              : role === 'ORGANIZER'
+              ? '/dashboard'
+              : '/admin',
         },
       });
     } catch (error) {
-      console.error('❌ Registration error:', error);
-      
+      console.error('❌ Error en registro:', error);
+
       if (error instanceof z.ZodError) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
+          error: 'Datos inválidos',
           details: error.errors,
         });
       }
 
       return res.status(500).json({
         success: false,
-        error: 'Registration failed',
+        error: 'Error interno al registrar',
       });
     }
   }
 
   /**
-   * Login organizer
+   * ========================
+   * LOGIN UNIFICADO
+   * ========================
    */
   static async login(req: Request, res: Response) {
     try {
       const validatedData = loginSchema.parse(req.body);
+      const { email, password } = validatedData;
 
-      // Find organizer
-      const organizer = await prisma.organizer.findUnique({
-        where: { email: validatedData.email },
-      });
+      // Buscar primero en users, luego en organizers
+      const user = await prisma.user.findUnique({ where: { email } });
+      const organizer = !user ? await prisma.organizer.findUnique({ where: { email } }) : null;
 
-      if (!organizer || !organizer.isActive) {
+      const account = user || organizer;
+      const role = user ? user.role : organizer ? 'ORGANIZER' : null;
+
+      if (!account || !account.isActive) {
         return res.status(401).json({
           success: false,
-          error: 'Invalid credentials',
+          error: 'Credenciales inválidas',
         });
       }
 
-      // Verify password
-      const isValidPassword = await bcrypt.compare(
-        validatedData.password,
-        organizer.passwordHash
-      );
-
-      if (!isValidPassword) {
+      // Verificar contraseña
+      const validPassword = await bcrypt.compare(password, account.passwordHash);
+      if (!validPassword) {
         return res.status(401).json({
           success: false,
-          error: 'Invalid credentials',
+          error: 'Credenciales inválidas',
         });
       }
 
-      // Generate JWT token
+      // Generar token
       const token = jwt.sign(
         {
-          organizerId: organizer.id,
-          email: organizer.email,
-          tier: organizer.tier
+          id: account.id,
+          email: account.email,
+          role,
         },
         process.env.JWT_SECRET || 'your-secret-key',
         { expiresIn: '7d' }
       );
 
-      console.log(`✅ Organizer logged in: ${organizer.email}`);
+      console.log(`✅ ${role} inició sesión: ${account.email}`);
 
       return res.json({
         success: true,
         data: {
-          organizer: {
-            id: organizer.id,
-            email: organizer.email,
-            name: organizer.name,
-            company: organizer.company,
-            tier: organizer.tier,
-          },
+          id: account.id,
+          email: account.email,
+          name: account.name,
+          company: 'company' in account ? account.company : null,
+          role,
           token,
-          message: 'Login successful',
+          redirect:
+            role === 'USER'
+              ? '/user'
+              : role === 'ORGANIZER'
+              ? '/dashboard'
+              : '/admin',
         },
       });
     } catch (error) {
-      console.error('❌ Login error:', error);
-      
+      console.error('❌ Error en login:', error);
+
       if (error instanceof z.ZodError) {
         return res.status(400).json({
           success: false,
-          error: 'Validation failed',
+          error: 'Datos inválidos',
           details: error.errors,
         });
       }
 
       return res.status(500).json({
         success: false,
-        error: 'Login failed',
+        error: 'Error interno al iniciar sesión',
       });
     }
   }
 
   /**
-   * Get organizer profile
+   * ========================
+   * PERFIL DE ORGANIZADOR
+   * ========================
    */
   static async getProfile(req: any, res: Response) {
     try {
@@ -193,7 +224,7 @@ export class AuthController {
       if (!organizerId) {
         return res.status(401).json({
           success: false,
-          error: 'Authentication required',
+          error: 'Autenticación requerida',
         });
       }
 
@@ -201,10 +232,7 @@ export class AuthController {
         where: { id: organizerId },
         include: {
           _count: {
-            select: {
-              campaigns: true,
-              apiKeys: true
-            },
+            select: { campaigns: true, apiKeys: true },
           },
         },
       });
@@ -212,7 +240,7 @@ export class AuthController {
       if (!organizer) {
         return res.status(404).json({
           success: false,
-          error: 'Organizer not found',
+          error: 'Organizador no encontrado',
         });
       }
 
@@ -226,22 +254,24 @@ export class AuthController {
           tier: organizer.tier,
           stats: {
             totalCampaigns: organizer._count.campaigns,
-            totalApiKeys: organizer._count.apiKeys
+            totalApiKeys: organizer._count.apiKeys,
           },
-          createdAt: organizer.createdAt
+          createdAt: organizer.createdAt,
         },
       });
     } catch (error) {
-      console.error('❌ Get profile error:', error);
+      console.error('❌ Error al obtener perfil:', error);
       return res.status(500).json({
         success: false,
-        error: 'Failed to get profile',
+        error: 'No se pudo obtener el perfil',
       });
     }
   }
 
   /**
-   * Create API key
+   * ========================
+   * CREAR API KEY (solo ORGANIZER)
+   * ========================
    */
   static async createApiKey(req: any, res: Response) {
     try {
@@ -251,26 +281,21 @@ export class AuthController {
       if (!organizerId) {
         return res.status(401).json({
           success: false,
-          error: 'Authentication required',
+          error: 'Autenticación requerida',
         });
       }
 
-      // Check API key limit (basic limit for now)
-      const existingKeys = await prisma.apiKey.count({
-        where: {
-          organizerId,
-          isActive: true,
-        },
+      const activeKeys = await prisma.apiKey.count({
+        where: { organizerId, isActive: true },
       });
 
-      if (existingKeys >= 10) {
+      if (activeKeys >= 10) {
         return res.status(400).json({
           success: false,
-          error: 'Maximum API keys reached (10)',
+          error: 'Límite máximo de 10 API Keys alcanzado',
         });
       }
 
-      // Generate API key
       const key = `pk_${uuidv4().replace(/-/g, '')}`;
 
       const apiKey = await prisma.apiKey.create({
@@ -278,45 +303,34 @@ export class AuthController {
           key,
           name: validatedData.name,
           organizerId,
-          isActive: true
-        },
-        select: {
-          id: true,
-          key: true,
-          name: true,
-          createdAt: true,
+          isActive: true,
         },
       });
 
-      console.log(`🔑 API key created for organizer ${organizerId}: ${validatedData.name}`);
+      console.log(`🔑 API Key creada: ${validatedData.name}`);
 
       return res.status(201).json({
         success: true,
         data: {
-          ...apiKey,
-          message: 'API key created successfully',
+          id: apiKey.id,
+          key: apiKey.key,
+          name: apiKey.name,
+          createdAt: apiKey.createdAt,
         },
       });
     } catch (error) {
-      console.error('❌ Create API key error:', error);
-      
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({
-          success: false,
-          error: 'Validation failed',
-          details: error.errors,
-        });
-      }
-
+      console.error('❌ Error al crear API Key:', error);
       return res.status(500).json({
         success: false,
-        error: 'Failed to create API key',
+        error: 'Error interno al crear API Key',
       });
     }
   }
 
   /**
-   * List API keys
+   * ========================
+   * LISTAR API KEYS
+   * ========================
    */
   static async listApiKeys(req: any, res: Response) {
     try {
@@ -325,38 +339,29 @@ export class AuthController {
       if (!organizerId) {
         return res.status(401).json({
           success: false,
-          error: 'Authentication required',
+          error: 'Autenticación requerida',
         });
       }
 
       const apiKeys = await prisma.apiKey.findMany({
         where: { organizerId },
-        select: {
-          id: true,
-          name: true,
-          key: true,
-          isActive: true,
-          lastUsedAt: true,
-          createdAt: true,
-        },
         orderBy: { createdAt: 'desc' },
       });
 
-      return res.json({
-        success: true,
-        data: apiKeys,
-      });
+      return res.json({ success: true, data: apiKeys });
     } catch (error) {
-      console.error('❌ List API keys error:', error);
+      console.error('❌ Error al listar API Keys:', error);
       return res.status(500).json({
         success: false,
-        error: 'Failed to list API keys',
+        error: 'Error interno al listar API Keys',
       });
     }
   }
 
   /**
-   * Deactivate API key
+   * ========================
+   * DESACTIVAR API KEY
+   * ========================
    */
   static async deactivateApiKey(req: any, res: Response) {
     try {
@@ -366,21 +371,18 @@ export class AuthController {
       if (!organizerId) {
         return res.status(401).json({
           success: false,
-          error: 'Authentication required',
+          error: 'Autenticación requerida',
         });
       }
 
       const apiKey = await prisma.apiKey.findFirst({
-        where: {
-          id: keyId,
-          organizerId,
-        },
+        where: { id: keyId, organizerId },
       });
 
       if (!apiKey) {
         return res.status(404).json({
           success: false,
-          error: 'API key not found',
+          error: 'API Key no encontrada',
         });
       }
 
@@ -389,17 +391,17 @@ export class AuthController {
         data: { isActive: false },
       });
 
-      console.log(`🔑 API key deactivated: ${apiKey.name}`);
+      console.log(`🔒 API Key desactivada: ${apiKey.name}`);
 
       return res.json({
         success: true,
-        message: 'API key deactivated successfully',
+        message: 'API Key desactivada correctamente',
       });
     } catch (error) {
-      console.error('❌ Deactivate API key error:', error);
+      console.error('❌ Error al desactivar API Key:', error);
       return res.status(500).json({
         success: false,
-        error: 'Failed to deactivate API key',
+        error: 'Error interno al desactivar API Key',
       });
     }
   }
