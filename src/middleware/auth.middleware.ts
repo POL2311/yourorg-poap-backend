@@ -24,7 +24,7 @@ export interface AuthenticatedRequest extends Request {
   };
 }
 
-// JWT Authentication (for dashboard/organizer operations)
+// JWT Authentication (for both users and organizers)
 export const authenticate = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
@@ -33,27 +33,51 @@ export const authenticate = async (req: AuthenticatedRequest, res: Response, nex
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
 
-    // Decoded debe traer organizerId (asegúrate al emitir el token)
-    const organizer = await prisma.organizer.findUnique({ where: { id: decoded.organizerId } });
-    if (!organizer || !organizer.isActive) {
-      return res.status(401).json({ success: false, error: 'Invalid or inactive organizer' });
+    // Si es un usuario normal (userId presente)
+    if (decoded.userId) {
+      const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+      if (!user || !user.isActive) {
+        return res.status(401).json({ success: false, error: 'Invalid or inactive user' });
+      }
+
+      req.user = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        organizerId: '', // No aplicable para usuarios normales
+      };
+
+      next();
+      return;
     }
 
-    req.organizer = {
-      id: organizer.id,
-      email: organizer.email,
-      tier: organizer.tier,
-      name: organizer.name
-    };
+    // Si es un organizador (organizerId presente o id presente)
+    const organizerId = decoded.organizerId || decoded.id;
+    if (organizerId) {
+      const organizer = await prisma.organizer.findUnique({ where: { id: organizerId } });
+      if (!organizer || !organizer.isActive) {
+        return res.status(401).json({ success: false, error: 'Invalid or inactive organizer' });
+      }
 
-    req.user = {
-      id: organizer.id,
-      email: organizer.email,
-      role: 'admin',
-      organizerId: organizer.id,          // ✅ canónico
-    };
+      req.organizer = {
+        id: organizer.id,
+        email: organizer.email,
+        tier: organizer.tier,
+        name: organizer.name
+      };
 
-    next();
+      req.user = {
+        id: organizer.id,
+        email: organizer.email,
+        role: 'admin',
+        organizerId: organizer.id,
+      };
+
+      next();
+      return;
+    }
+
+    return res.status(401).json({ success: false, error: 'Invalid token format' });
   } catch {
     return res.status(403).json({ success: false, error: 'Invalid token' });
   }
@@ -138,6 +162,64 @@ export const requireRole = (roles: string[]) => {
     }
     next();
   };
+};
+
+// User Authentication (for regular users)
+export const authenticateUser = async (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
+  const authHeader = req.headers['authorization'];
+  const token = authHeader && authHeader.split(' ')[1];
+  if (!token) return res.status(401).json({ success: false, error: 'Access token required' });
+
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key') as any;
+
+    // For regular users, look for userId in the token
+    if (decoded.userId) {
+      const user = await prisma.user.findUnique({ where: { id: decoded.userId } });
+      if (!user || !user.isActive) {
+        return res.status(401).json({ success: false, error: 'Invalid or inactive user' });
+      }
+
+      req.user = {
+        id: user.id,
+        email: user.email,
+        role: user.role,
+        organizerId: '' // Not applicable for regular users
+      };
+
+      next();
+      return;
+    }
+
+    // For organizers, use the existing logic
+    if (decoded.organizerId) {
+      const organizer = await prisma.organizer.findUnique({ where: { id: decoded.organizerId } });
+      if (!organizer || !organizer.isActive) {
+        return res.status(401).json({ success: false, error: 'Invalid or inactive organizer' });
+      }
+
+      req.organizer = {
+        id: organizer.id,
+        email: organizer.email,
+        tier: organizer.tier,
+        name: organizer.name
+      };
+
+      req.user = {
+        id: organizer.id,
+        email: organizer.email,
+        role: 'admin',
+        organizerId: organizer.id,
+      };
+
+      next();
+      return;
+    }
+
+    return res.status(401).json({ success: false, error: 'Invalid token format' });
+  } catch {
+    return res.status(403).json({ success: false, error: 'Invalid token' });
+  }
 };
 
 export const requireOrganization = async (
