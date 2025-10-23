@@ -3,7 +3,11 @@ import { PrismaClient } from '@prisma/client';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
 
 const prisma = new PrismaClient();
-
+function toYM(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = String(d.getUTCMonth() + 1).padStart(2, '0');
+  return `${y}-${m}`;
+}
 // ✅ Interface para actividad reciente
 interface RecentActivity {
   id: string;
@@ -137,6 +141,7 @@ export class AnalyticsController {
       return res.status(500).json({ success: false, error: 'Failed to fetch campaign analytics' });
     }
   }
+  
 
   private groupClaimsByDay(claims: Array<{ claimedAt: Date; _count: { _all: number } }>) {
     const grouped = new Map<string, number>();
@@ -168,18 +173,19 @@ export class AnalyticsController {
 
   // ✅ NUEVOS MÉTODOS PARA GRÁFICAS DEL DASHBOARD
   async getDailyClaims(req: AuthenticatedRequest, res: Response) {
-    try {
-      const organizerId = req.user!.organizerId;
-      const tz = (req.query.tz as string) || 'America/Mexico_City';
-      const end = new Date();
-      const start = new Date(end.getTime() - 6 * 24 * 60 * 60 * 1000);
+    const organizerId = req.user!.organizerId;
+    const tz = (req.query.tz as string) || 'America/Mexico_City';
+    const end = new Date();                      // hoy ahora
+    const start = new Date(end.getTime() - 6 * 24 * 60 * 60 * 1000); // hace 6 días
 
+    try {
+      // OJO: tablas reales por @@map => "claims" y "campaigns"
       const rows = await prisma.$queryRaw<{ d: Date; claims: bigint }[]>`
         SELECT
           date_trunc('day', (c."claimedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS d,
           COUNT(*)::bigint AS claims
-        FROM "Claim" c
-        JOIN "Campaign" ca ON ca.id = c."campaignId"
+        FROM "claims" c
+        JOIN "campaigns" ca ON ca."id" = c."campaignId"
         WHERE ca."organizerId" = ${organizerId}
           AND c."claimedAt" >= ${start}
           AND c."claimedAt" <  ${end}
@@ -188,36 +194,67 @@ export class AnalyticsController {
       `;
 
       const map = new Map<string, number>();
-      rows.forEach(r => map.set(new Date(r.d).toISOString().slice(0, 10), Number(r.claims)));
+      rows.forEach(r => {
+        const k = new Date(r.d).toISOString().slice(0, 10); // YYYY-MM-DD
+        map.set(k, Number(r.claims));
+      });
 
+      // zero-fill
       const out: { date: string; claims: number }[] = [];
-      for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-        const k = d.toISOString().slice(0, 10);
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        const k = cursor.toISOString().slice(0, 10);
         out.push({ date: k, claims: map.get(k) ?? 0 });
+        cursor.setDate(cursor.getDate() + 1);
       }
 
       return res.json(out);
-    } catch (error) {
-      console.error('Error fetching daily claims:', error);
-      return res.status(500).json({ success: false, error: 'Failed to fetch daily claims' });
+    } catch (err) {
+      console.warn('getDailyClaims SQL falló, usando fallback Prisma. Error:', err);
+      // Fallback seguro con Prisma puro (sin TZ exacto, pero suficiente en dev)
+      try {
+        const fallback = await prisma.claim.findMany({
+          where: {
+            campaign: { is: { organizerId } },
+            claimedAt: { gte: start, lt: end },
+          },
+          select: { claimedAt: true },
+        });
+        const map = new Map<string, number>();
+        fallback.forEach(r => {
+          const k = new Date(r.claimedAt).toISOString().slice(0, 10);
+          map.set(k, (map.get(k) ?? 0) + 1);
+        });
+        const out: { date: string; claims: number }[] = [];
+        const cursor = new Date(start);
+        while (cursor <= end) {
+          const k = cursor.toISOString().slice(0, 10);
+          out.push({ date: k, claims: map.get(k) ?? 0 });
+          cursor.setDate(cursor.getDate() + 1);
+        }
+        return res.json(out);
+      } catch (e2) {
+        console.error('Fallback Prisma también falló:', e2);
+        return res.status(500).json({ success: false, error: 'Failed to fetch daily claims' });
+      }
     }
   }
 
-  async getMonthlyTrend(req: AuthenticatedRequest, res: Response) {
+async getMonthlyTrend(req: AuthenticatedRequest, res: Response) {
+    const organizerId = req.user!.organizerId;
+    const tz = (req.query.tz as string) || 'America/Mexico_City';
+    const months = Math.max(1, Math.min(24, Number(req.query.months || 6)));
+
+    const end = new Date(); // ahora
+    const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1); // primer día del mes inicial
+
     try {
-      const organizerId = req.user!.organizerId;
-      const tz = (req.query.tz as string) || 'America/Mexico_City';
-      const months = Number(req.query.months || 6);
-
-      const end = new Date();
-      const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1);
-
       const claims = await prisma.$queryRaw<{ m: Date; claims: bigint }[]>`
         SELECT
           date_trunc('month', (c."claimedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS m,
           COUNT(*)::bigint AS claims
-        FROM "Claim" c
-        JOIN "Campaign" ca ON ca.id = c."campaignId"
+        FROM "claims" c
+        JOIN "campaigns" ca ON ca."id" = c."campaignId"
         WHERE ca."organizerId" = ${organizerId}
           AND c."claimedAt" >= ${start}
           AND c."claimedAt" <= ${end}
@@ -229,7 +266,7 @@ export class AnalyticsController {
         SELECT
           date_trunc('month', (ca."createdAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS m,
           COUNT(*)::bigint AS campaigns
-        FROM "Campaign" ca
+        FROM "campaigns" ca
         WHERE ca."organizerId" = ${organizerId}
           AND ca."createdAt" >= ${start}
           AND ca."createdAt" <= ${end}
@@ -239,21 +276,67 @@ export class AnalyticsController {
 
       const cMap = new Map<string, number>();
       claims.forEach(r => cMap.set(new Date(r.m).toISOString().slice(0, 7), Number(r.claims)));
+
       const pMap = new Map<string, number>();
       campaigns.forEach(r => pMap.set(new Date(r.m).toISOString().slice(0, 7), Number(r.campaigns)));
 
+      // zero-fill con etiquetas cortas (Jan, Feb, …)
       const out: { month: string; claims: number; campaigns: number }[] = [];
       for (let i = 0; i < months; i++) {
         const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
-        const key = d.toISOString().slice(0, 7);
+        const key = d.toISOString().slice(0, 7); // YYYY-MM
         const label = d.toLocaleString('en-US', { month: 'short' });
-        out.push({ month: label, claims: cMap.get(key) ?? 0, campaigns: pMap.get(key) ?? 0 });
+        out.push({
+          month: label,
+          claims: cMap.get(key) ?? 0,
+          campaigns: pMap.get(key) ?? 0,
+        });
       }
 
       return res.json(out);
-    } catch (error) {
-      console.error('Error fetching monthly trend:', error);
-      return res.status(500).json({ success: false, error: 'Failed to fetch monthly trend' });
+    } catch (err) {
+      console.warn('getMonthlyTrend SQL falló, usando fallback Prisma. Error:', err);
+      try {
+        // Fallback sin SQL crudo
+        const claimRows = await prisma.claim.findMany({
+          where: {
+            campaign: { is: { organizerId } },
+            claimedAt: { gte: start, lte: end },
+          },
+          select: { claimedAt: true },
+        });
+        const campRows = await prisma.campaign.findMany({
+          where: { organizerId, createdAt: { gte: start, lte: end } },
+          select: { createdAt: true },
+        });
+
+        const claimsMap = new Map<string, number>();
+        claimRows.forEach(r => {
+          const k = toYM(r.claimedAt);
+          claimsMap.set(k, (claimsMap.get(k) ?? 0) + 1);
+        });
+        const campsMap = new Map<string, number>();
+        campRows.forEach(r => {
+          const k = toYM(r.createdAt);
+          campsMap.set(k, (campsMap.get(k) ?? 0) + 1);
+        });
+
+        const out: { month: string; claims: number; campaigns: number }[] = [];
+        for (let i = 0; i < months; i++) {
+          const d = new Date(start.getFullYear(), start.getMonth() + i, 1);
+          const key = toYM(d);
+          const label = d.toLocaleString('en-US', { month: 'short' });
+          out.push({
+            month: label,
+            claims: claimsMap.get(key) ?? 0,
+            campaigns: campsMap.get(key) ?? 0,
+          });
+        }
+        return res.json(out);
+      } catch (e2) {
+        console.error('Fallback Prisma también falló:', e2);
+        return res.status(500).json({ success: false, error: 'Failed to fetch monthly trend' });
+      }
     }
   }
 
@@ -367,4 +450,5 @@ export class AnalyticsController {
       return `${days} day${days > 1 ? 's' : ''} ago`;
     }
   }
+  
 }

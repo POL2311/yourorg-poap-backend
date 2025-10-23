@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { PublicKey, Connection, Keypair } from '@solana/web3.js';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { NFTMintService } from '../services/nft-mint.service';
 
 const prisma = new PrismaClient();
@@ -400,15 +400,13 @@ export class MultiTenantNFTController {
 
       console.log('📊 Getting claim stats for:', userPublicKey);
 
-      // Check if userPublicKey is an email (for testing) or a valid Solana public key
-      let whereClause: any = {};
-      
+      // Decide filtro por email vs public key
+      let prismaWhere: any = {};
+      let sqlFilter: Prisma.Sql;
+
       if (userPublicKey.includes('@')) {
-        // If it's an email, find the user by email and get claims by userId
-        const user = await prisma.user.findUnique({
-          where: { email: userPublicKey }
-        });
-        
+        // Email → buscamos el user y filtramos por userId
+        const user = await prisma.user.findUnique({ where: { email: userPublicKey } });
         if (!user) {
           return res.json({
             success: true,
@@ -421,41 +419,40 @@ export class MultiTenantNFTController {
             },
           });
         }
-        
-        whereClause = { userId: user.id };
+        prismaWhere = { userId: user.id };
+        sqlFilter = Prisma.sql`"userId" = ${user.id}`;
       } else {
-        // If it's a Solana public key, validate it and search by userPublicKey
+        // Public key de Solana
         try {
           new PublicKey(userPublicKey);
-          whereClause = { userPublicKey };
         } catch {
           return res.status(400).json({
             success: false,
             error: 'Invalid userPublicKey format - must be a valid Solana public key or email',
           });
         }
+        prismaWhere = { userPublicKey };
+        sqlFilter = Prisma.sql`"userPublicKey" = ${userPublicKey}`;
       }
 
-      // Get total claims count
-      const totalClaims = await prisma.claim.count({
-        where: whereClause,
-      });
-
+      // Total
+      const totalClaims = await prisma.claim.count({ where: prismaWhere });
       console.log('📈 Total claims found:', totalClaims);
 
-      // Get claims by month for recent activity
-      const monthlyClaims = await prisma.$queryRaw<{ month: string; count: bigint }[]>`
-        SELECT 
-          TO_CHAR("claimedAt", 'YYYY-MM') as month,
-          COUNT(*)::bigint as count
-        FROM "claims" 
-        WHERE ${whereClause.userId ? `"userId" = ${whereClause.userId}` : `"userPublicKey" = ${whereClause.userPublicKey}`}
-        GROUP BY TO_CHAR("claimedAt", 'YYYY-MM')
-        ORDER BY month DESC
-        LIMIT 12
-      `;
+      // Serie mensual (parametrizada, sin strings)
+      const monthlyClaims = await prisma.$queryRaw<{ month: string; count: bigint }[]>(
+        Prisma.sql`
+          SELECT 
+            TO_CHAR("claimedAt", 'YYYY-MM') as month,
+            COUNT(*)::bigint as count
+          FROM "claims" 
+          WHERE ${sqlFilter}
+          GROUP BY TO_CHAR("claimedAt", 'YYYY-MM')
+          ORDER BY month DESC
+          LIMIT 12
+        `
+      );
 
-      // Calculate badges based on claim count
       const badges = this.calculateBadges(totalClaims);
 
       return res.json({
@@ -591,8 +588,8 @@ export class MultiTenantNFTController {
     if (totalClaims >= 25) return { level: 8, name: 'Experto', color: 'blue' };
     if (totalClaims >= 10) return { level: 7, name: 'Entusiasta', color: 'green' };
     if (totalClaims >= 5) return { level: 6, name: 'Coleccionista', color: 'orange' };
-    if (totalClaims >= 1) return { level: 5, name: 'Iniciado', color: 'gray' };
-    return { level: 1, name: 'Novato', color: 'gray' };
+    if (totalClaims >= 1) return { level: 5, name: 'Iniciado', color: 'orange' };
+    return { level: 1, name: 'Novato', color: 'orange' };
   }
 
   /**
