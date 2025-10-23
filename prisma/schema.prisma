@@ -1,5 +1,3 @@
-// schema.prisma — Optimized for analytics & performance (PostgreSQL)
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,9 +8,6 @@ datasource db {
   shadowDatabaseUrl = env("SHADOW_DATABASE_URL")
 }
 
-/* =========================
-   Enums
-========================= */
 enum UserRole {
   USER
   ORGANIZER
@@ -25,9 +20,6 @@ enum PlanTier {
   ENTERPRISE
 }
 
-/* =========================
-   Users & Roles
-========================= */
 model User {
   id           String   @id @default(cuid())
   email        String   @unique @db.Citext
@@ -38,20 +30,14 @@ model User {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  // Relations
   claims     Claim[]
   activities UserActivity[]
 
   @@map("users")
-
-  // Indexes for auth & listing
   @@index([createdAt])
   @@index([isActive])
 }
 
-/* =========================
-   Organizers & API Keys
-========================= */
 model Organizer {
   id           String    @id @default(cuid())
   email        String    @unique @db.Citext
@@ -63,12 +49,10 @@ model Organizer {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  // Relations
   apiKeys   ApiKey[]
   campaigns Campaign[]
 
   @@map("organizers")
-
   @@index([createdAt])
   @@index([isActive, tier])
 }
@@ -82,58 +66,41 @@ model ApiKey {
   lastUsedAt  DateTime?
   createdAt   DateTime @default(now())
 
-  // Relations
   organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
 
   @@map("api_keys")
-
-  // For quick scans by org & status
   @@index([organizerId])
   @@index([isActive])
   @@index([lastUsedAt])
 }
 
-/* =========================
-   Campaigns
-========================= */
 model Campaign {
-  id          String   @id @default(cuid())
-  name        String   @db.VarChar(200)
-  description String?
-  eventDate   DateTime
-  location    String?  @db.VarChar(200)
-  imageUrl    String?  @db.VarChar(600)
-  externalUrl String?  @db.VarChar(600)
-  // Actual en uso (texto plano). Mantener por compatibilidad:
-  secretCode  String?  @db.VarChar(120)
-  // Futuro seguro (hash del código). Úsalo cuando migres la verificación:
-  secretCodeHash String? @db.VarChar(200)
+  id             String   @id @default(cuid())
+  name           String   @db.VarChar(200)
+  description    String?
+  eventDate      DateTime
+  location       String?  @db.VarChar(200)
+  imageUrl       String?  @db.VarChar(600)
+  externalUrl    String?  @db.VarChar(600)
+  secretCode     String?  @db.VarChar(120)
+  secretCodeHash String?  @db.VarChar(200)
+  maxClaims      Int?
+  isActive       Boolean  @default(true)
+  organizerId    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  metadata       Json?
 
-  maxClaims   Int?
-  isActive    Boolean  @default(true)
-  organizerId String
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Metadata
-  metadata Json?
-
-  // Relations
   organizer Organizer @relation(fields: [organizerId], references: [id], onDelete: Cascade)
   claims    Claim[]
 
   @@map("campaigns")
-
-  // Indexes used by analytics & listing
   @@index([organizerId])
   @@index([createdAt])
   @@index([organizerId, isActive])
   @@index([eventDate])
 }
 
-/* =========================
-   Claims & Usage
-========================= */
 model Claim {
   id              String   @id @default(cuid())
   campaignId      String
@@ -144,22 +111,15 @@ model Claim {
   transactionHash String?  @db.VarChar(140)
   gasCost         Int?
   claimedAt       DateTime @default(now())
+  userAgent       String?
+  ipAddress       String?  @db.VarChar(64)
+  metadata        Json?
 
-  // Extra data
-  userAgent String?
-  ipAddress String? @db.VarChar(64)
-  metadata  Json?
-
-  // Relations
   campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   user     User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
 
-  // Prevent duplicate claims per campaign/user
   @@unique([campaignId, userPublicKey])
-
   @@map("claims")
-
-  // Indexes — KEY for analytics & lookups
   @@index([claimedAt])
   @@index([campaignId, claimedAt])
   @@index([userPublicKey, claimedAt])
@@ -168,20 +128,16 @@ model Claim {
 model Usage {
   id          String   @id @default(cuid())
   organizerId String
-  date        DateTime @default(now()) // si quieres unicidad por día, guarda truncado
+  date        DateTime @default(now())
   claims      Int      @default(0)
   gasCost     Int      @default(0)
 
   @@unique([organizerId, date])
   @@map("usage")
-
   @@index([date])
   @@index([organizerId, date])
 }
 
-/* =========================
-   NFT Mints, Relayer Stats, Activity
-========================= */
 model NFTMint {
   id                   String   @id @default(cuid())
   mintAddress          String   @unique @db.VarChar(100)
@@ -198,8 +154,6 @@ model NFTMint {
   updatedAt            DateTime @updatedAt
 
   @@map("nft_mints")
-
-  // For explorers & dashboards
   @@index([userPublicKey, createdAt])
   @@index([createdAt])
   @@index([relayerPublicKey, createdAt])
@@ -216,25 +170,21 @@ model RelayerStats {
   updatedAt        DateTime @updatedAt
 
   @@map("relayer_stats")
-
   @@index([lastActivity])
 }
 
 model UserActivity {
   id            String   @id @default(cuid())
   userPublicKey String   @db.VarChar(100)
-  action        String   @db.VarChar(60) // "mint_nft", "claim_poap", etc.
+  action        String   @db.VarChar(60)
   details       Json
   ipAddress     String?  @db.VarChar(64)
   userAgent     String?
   createdAt     DateTime @default(now())
-
-  // Reverse relation to User
-  userId String?
-  user   User?   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_activity")
-
   @@index([userId, createdAt])
   @@index([userPublicKey, createdAt])
 }
