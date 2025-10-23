@@ -65,7 +65,7 @@ export class AuthController {
             company,
             passwordHash,
             isActive: true,
-            tier: 'free',
+            tier: 'FREE',
           },
         });
         role = 'ORGANIZER';
