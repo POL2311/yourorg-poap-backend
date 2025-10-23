@@ -10,7 +10,8 @@
     "dev": "ts-node src/index.ts",
     "dev:multi": "ts-node src/index-multitenant.ts",
     "build": "tsc",
-    "start:multi": "node dist/index-multitenant.js"
+    "start": "node dist/index.js",
+    "start:multi": "node dist/index-multitenant.js",
     "test": "jest",
     "db:generate": "prisma generate",
     "db:push": "prisma db push",
@@ -18,7 +19,7 @@
     "migrate:deploy": "prisma migrate deploy",
     "db:studio": "prisma studio",
     "db:seed": "ts-node prisma/seed.ts"
-  },
+},
   "dependencies": {
     "@prisma/client": "5.7.1",
     "@solana/spl-token": "^0.4.14",
