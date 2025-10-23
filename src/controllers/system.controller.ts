@@ -342,7 +342,7 @@ export class SystemController {
             email: `test-${Date.now()}@example.com`,
             name: 'Test Organizer',
             passwordHash: 'test-hash',
-            tier: 'free',
+            tier: 'FREE',
           },
         });
 
