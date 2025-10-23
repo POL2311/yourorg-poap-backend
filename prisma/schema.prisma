@@ -1,3 +1,5 @@
+// prisma/schema.prisma
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -12,12 +14,6 @@ enum UserRole {
   USER
   ORGANIZER
   ADMIN
-}
-
-enum PlanTier {
-  FREE
-  PRO
-  ENTERPRISE
 }
 
 model User {
@@ -45,7 +41,7 @@ model Organizer {
   company      String?   @db.VarChar(160)
   passwordHash String    @db.VarChar(200)
   isActive     Boolean   @default(true)
-  tier         PlanTier  @default(FREE)
+  tier         String    @db.VarChar(50) @default("free")  // <-- TEXTO con default "free"
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
