@@ -5,6 +5,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import rateLimit from 'express-rate-limit';
+import authRouter from './routes/auth';
+import permitsRoutes from './routes/permits';
 
 import { AuthController } from './controllers/auth.controller';
 import { CampaignController } from './controllers/campaign.controller';
@@ -23,7 +25,9 @@ app.use(cors());
 app.use(helmet());
 app.use(morgan('combined'));
 app.use(express.json({ limit: '10mb' }));
-
+app.use('/api/auth', authRouter);
+app.use('/api/user', userRoutes);
+app.use('/api/permits', permitsRoutes);
 /* ===== RATE LIMITING ===== */
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
