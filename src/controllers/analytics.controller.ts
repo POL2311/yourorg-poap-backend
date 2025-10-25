@@ -1,8 +1,7 @@
 import { Request, Response } from 'express';
-import { PrismaClient } from '@prisma/client';
+import { prisma } from '../lib/prisma';
 import { AuthenticatedRequest } from '../middleware/auth.middleware';
-
-const prisma = new PrismaClient();
+import { getAnalyticsMaxDays } from '../utils/quota';
 function toYM(d: Date): string {
   const y = d.getUTCFullYear();
   const m = String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -27,14 +26,19 @@ export class AnalyticsController {
     try {
       const organizerId = req.user!.organizerId;
 
+      // ✅ limita a N días por plan
+      const org = await prisma.organizer.findUnique({ where: { id: organizerId }, select: { tier: true } });
+      if (!org) return res.status(403).json({ success: false, error: 'Organizer not found' });
+
+      const maxDays = getAnalyticsMaxDays(org.tier as any);
       const now = new Date();
-      const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+      const windowStart = new Date(now.getTime() - maxDays * 24 * 60 * 60 * 1000);
 
       const [
         totalCampaigns,
         activeCampaigns,
         totalClaims,
-        claimsLast30Days,
+        claimsInWindow,              // antes claimsLast30Days
         topCampaigns,
         recentActivity
       ] = await Promise.all([
@@ -42,7 +46,7 @@ export class AnalyticsController {
         prisma.campaign.count({ where: { organizerId, isActive: true } }),
         prisma.claim.count({ where: { campaign: { is: { organizerId } } } }),
         prisma.claim.count({
-          where: { campaign: { is: { organizerId } }, claimedAt: { gte: thirtyDaysAgo } }
+          where: { campaign: { is: { organizerId } }, claimedAt: { gte: windowStart } }
         }),
         prisma.campaign.findMany({
           where: { organizerId },
@@ -65,7 +69,8 @@ export class AnalyticsController {
             totalCampaigns,
             activeCampaigns,
             totalClaims,
-            claimsLast30Days
+            claimsLastNDays: claimsInWindow, // ✅ ahora dependiente del plan
+            windowDays: maxDays
           },
           topCampaigns: topCampaigns.map(campaign => ({
             id: campaign.id,
@@ -172,34 +177,74 @@ export class AnalyticsController {
   }
 
   // ✅ NUEVOS MÉTODOS PARA GRÁFICAS DEL DASHBOARD
-  async getDailyClaims(req: AuthenticatedRequest, res: Response) {
-    const organizerId = req.user!.organizerId;
+async getDailyClaims(req: AuthenticatedRequest, res: Response) {
+  try {
+    const organizerId = req.user!.organizerId;                 // ← antes no estaba
     const tz = (req.query.tz as string) || 'America/Mexico_City';
-    const end = new Date();                      // hoy ahora
-    const start = new Date(end.getTime() - 6 * 24 * 60 * 60 * 1000); // hace 6 días
 
+    // limitar por plan
+    const org = await prisma.organizer.findUnique({
+      where: { id: organizerId },
+      select: { tier: true },
+    });
+    if (!org) return res.status(403).json({ success: false, error: 'Organizer not found' });
+
+    const maxDays = getAnalyticsMaxDays(org.tier as any);
+    const end = new Date();
+    const start = new Date(end.getTime() - (maxDays - 1) * 24 * 60 * 60 * 1000);
+
+    const rows = await prisma.$queryRaw<{ d: Date; claims: bigint }[]>`
+      SELECT
+        date_trunc('day', (c."claimedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS d,
+        COUNT(*)::bigint AS claims
+      FROM "claims" c
+      JOIN "campaigns" ca ON ca."id" = c."campaignId"
+      WHERE ca."organizerId" = ${organizerId}
+        AND c."claimedAt" >= ${start}
+        AND c."claimedAt" <  ${end}
+      GROUP BY 1
+      ORDER BY 1
+    `;
+
+    const map = new Map<string, number>();
+    rows.forEach(r => {
+      const k = new Date(r.d).toISOString().slice(0, 10);
+      map.set(k, Number(r.claims));
+    });
+
+    const out: { date: string; claims: number }[] = [];
+    const cursor = new Date(start);
+    while (cursor <= end) {
+      const k = cursor.toISOString().slice(0, 10);
+      out.push({ date: k, claims: map.get(k) ?? 0 });
+      cursor.setDate(cursor.getDate() + 1);
+    }
+
+    return res.json(out);
+  } catch (err) {
+    console.warn('getDailyClaims SQL falló, usando fallback Prisma. Error:', err);
     try {
-      // OJO: tablas reales por @@map => "claims" y "campaigns"
-      const rows = await prisma.$queryRaw<{ d: Date; claims: bigint }[]>`
-        SELECT
-          date_trunc('day', (c."claimedAt" AT TIME ZONE 'UTC') AT TIME ZONE ${tz}) AS d,
-          COUNT(*)::bigint AS claims
-        FROM "claims" c
-        JOIN "campaigns" ca ON ca."id" = c."campaignId"
-        WHERE ca."organizerId" = ${organizerId}
-          AND c."claimedAt" >= ${start}
-          AND c."claimedAt" <  ${end}
-        GROUP BY 1
-        ORDER BY 1
-      `;
+      const organizerId = req.user!.organizerId;
+      const end = new Date();
+      const tz = (req.query.tz as string) || 'America/Mexico_City';
+      const org = await prisma.organizer.findUnique({ where: { id: organizerId }, select: { tier: true } });
+      const maxDays = getAnalyticsMaxDays(org?.tier as any);
+      const start = new Date(end.getTime() - (maxDays - 1) * 24 * 60 * 60 * 1000);
 
-      const map = new Map<string, number>();
-      rows.forEach(r => {
-        const k = new Date(r.d).toISOString().slice(0, 10); // YYYY-MM-DD
-        map.set(k, Number(r.claims));
+      const fallback = await prisma.claim.findMany({
+        where: {
+          campaign: { is: { organizerId } },
+          claimedAt: { gte: start, lt: end },
+        },
+        select: { claimedAt: true },
       });
 
-      // zero-fill
+      const map = new Map<string, number>();
+      fallback.forEach(r => {
+        const k = new Date(r.claimedAt).toISOString().slice(0, 10);
+        map.set(k, (map.get(k) ?? 0) + 1);
+      });
+
       const out: { date: string; claims: number }[] = [];
       const cursor = new Date(start);
       while (cursor <= end) {
@@ -207,46 +252,26 @@ export class AnalyticsController {
         out.push({ date: k, claims: map.get(k) ?? 0 });
         cursor.setDate(cursor.getDate() + 1);
       }
-
       return res.json(out);
-    } catch (err) {
-      console.warn('getDailyClaims SQL falló, usando fallback Prisma. Error:', err);
-      // Fallback seguro con Prisma puro (sin TZ exacto, pero suficiente en dev)
-      try {
-        const fallback = await prisma.claim.findMany({
-          where: {
-            campaign: { is: { organizerId } },
-            claimedAt: { gte: start, lt: end },
-          },
-          select: { claimedAt: true },
-        });
-        const map = new Map<string, number>();
-        fallback.forEach(r => {
-          const k = new Date(r.claimedAt).toISOString().slice(0, 10);
-          map.set(k, (map.get(k) ?? 0) + 1);
-        });
-        const out: { date: string; claims: number }[] = [];
-        const cursor = new Date(start);
-        while (cursor <= end) {
-          const k = cursor.toISOString().slice(0, 10);
-          out.push({ date: k, claims: map.get(k) ?? 0 });
-          cursor.setDate(cursor.getDate() + 1);
-        }
-        return res.json(out);
-      } catch (e2) {
-        console.error('Fallback Prisma también falló:', e2);
-        return res.status(500).json({ success: false, error: 'Failed to fetch daily claims' });
-      }
+    } catch (e2) {
+      console.error('Fallback Prisma también falló:', e2);
+      return res.status(500).json({ success: false, error: 'Failed to fetch daily claims' });
     }
   }
+}
 
-async getMonthlyTrend(req: AuthenticatedRequest, res: Response) {
+
+  async getMonthlyTrend(req: AuthenticatedRequest, res: Response) {
     const organizerId = req.user!.organizerId;
     const tz = (req.query.tz as string) || 'America/Mexico_City';
-    const months = Math.max(1, Math.min(24, Number(req.query.months || 6)));
+    const requested = Math.max(1, Math.min(24, Number(req.query.months || 6)));
 
-    const end = new Date(); // ahora
-    const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1); // primer día del mes inicial
+    // ✅ si el tier es free, opcionalmente cap a 6 meses (o lo que prefieras)
+    const org = await prisma.organizer.findUnique({ where: { id: organizerId }, select: { tier: true } });
+    const months = org?.tier === 'free' ? Math.min(requested, 6) : requested;
+
+    const end = new Date();
+    const start = new Date(end.getFullYear(), end.getMonth() - (months - 1), 1);
 
     try {
       const claims = await prisma.$queryRaw<{ m: Date; claims: bigint }[]>`
