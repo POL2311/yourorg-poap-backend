@@ -3,8 +3,9 @@ import { Request, Response } from 'express'
 import { PrismaClient } from '@prisma/client'
 import { z } from 'zod'
 import { AuthenticatedRequest } from '../middleware/auth.middleware'
+import { prisma } from '../lib/prisma';                       // ✅ usa el prisma central
+import { assertCanCreateCampaign } from '../services/limits'; // ✅ nuevo
 
-const prisma = new PrismaClient()
 
 /* ==============================
    Schemas
@@ -33,16 +34,18 @@ const createCampaignSchema = z.object({
 })
 
 export class CampaignController {
-  /* ==============================
-     ORGANIZER: CREATE
-     ============================== */
   static async createCampaign(req: AuthenticatedRequest, res: Response) {
     try {
-      const validated = createCampaignSchema.parse(req.body)
-      const organizerId = req.user?.organizerId ?? req.organizer?.id
+      const validated = createCampaignSchema.parse(req.body);
+      const organizerId = req.user?.organizerId ?? req.organizer?.id;
       if (!organizerId) {
-        return res.status(401).json({ success: false, error: 'Authentication required' })
+        return res.status(401).json({ success: false, error: 'Authentication required' });
       }
+
+      // ✅ consulta tier y enforcer
+      const org = await prisma.organizer.findUnique({ where: { id: organizerId }, select: { tier: true } });
+      if (!org) return res.status(403).json({ success: false, error: 'Organizer not found' });
+      await assertCanCreateCampaign(organizerId, org.tier as any);
 
       const campaign = await prisma.campaign.create({
         data: {
@@ -51,15 +54,23 @@ export class CampaignController {
           eventDate: new Date(validated.eventDate),
           isActive: true,
         },
-      })
+      });
 
-      return res.status(201).json({ success: true, data: campaign })
-    } catch (error) {
-      if (error instanceof z.ZodError) {
-        return res.status(400).json({ success: false, error: 'Validation error', details: error.errors })
+      return res.status(201).json({ success: true, data: campaign });
+    } catch (error: any) {
+      if (error?.code === 'PLAN_LIMIT') {
+        return res.status(error.status || 402).json({
+          success: false,
+          code: error.code,
+          error: error.message,
+          meta: { requiredPlan: 'pro' },
+        });
       }
-      console.error('Error creating campaign:', error)
-      return res.status(500).json({ success: false, error: 'Failed to create campaign' })
+      if (error instanceof z.ZodError) {
+        return res.status(400).json({ success: false, error: 'Validation error', details: error.errors });
+      }
+      console.error('Error creating campaign:', error);
+      return res.status(500).json({ success: false, error: 'Failed to create campaign' });
     }
   }
 
